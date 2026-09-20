@@ -63,6 +63,25 @@ def evaluate(store, output, *, model_factory=None):
     sid = campaigns.create_session(
         cid, "Original synthetic evaluation", proactive=False
     )
+    campaigns.set_rule_profile(
+        cid,
+        {
+            "resource_aliases": {"hit_points": "HP", "hit_point": "HP"},
+            "tools": [
+                {
+                    "name": "within_limit",
+                    "operation": "less_equal",
+                    "description": "Compare the explicitly rolled result with the explicitly stated limit.",
+                }
+            ],
+        },
+    )
+    campaigns.add_document(
+        cid,
+        "Original fixture rule",
+        "In this original fixture, a regular check succeeds when the supplied result is less than or equal to the stated skill limit. A requested check is not itself a resource change.",
+        metadata={"kind": "rules"},
+    )
     mira = campaigns.save_character(
         cid, "Mira", {"resources": {"HP": 12}, "skills": {"Observation": 60}}
     )

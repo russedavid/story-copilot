@@ -25,5 +25,17 @@ def test_extraction_transport_does_not_omit_fields_that_change_event_meaning():
     )
 
 
-def test_narration_transport_remains_compatible_with_minimal_training_targets():
-    assert wire_schema(NarrationAnswer)["required"] == ["narration"]
+def test_narration_generation_requires_explicit_answer_slots_but_reading_old_records_works():
+    assert wire_schema(NarrationAnswer)["required"] == [
+        "direct_answer",
+        "narration",
+        "private_notes",
+        "questions",
+        "requested_checks",
+    ]
+    assert (
+        NarrationAnswer.model_validate(
+            {"narration": "Existing response."}
+        ).direct_answer
+        == ""
+    )

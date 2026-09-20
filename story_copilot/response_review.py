@@ -4,7 +4,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from .context import _Counter
-from .schema import NarrationAnswer
+from .schema import DirectAnswer, NarrationAnswer
 from .store import packed, source_quote
 
 
@@ -37,7 +37,8 @@ If one player asks another a question, invite the addressed participant to answe
 knows it. Put a private reminder in private_notes when useful; do not create a convenient accidental reveal.
 3. Continuity: use the latest explicit source and current resources; do not turn a hypothetical, draft,
 or old corrected value into something that happened. If source analysis failed, don't claim the old state is definitive.
-4. Intent: answer the current practical question, not just describe atmosphere or replay earlier dialogue.
+4. Intent: answer the current practical question in direct_answer; narration can be empty. Do not merely
+write atmosphere or replay earlier dialogue. A bookkeeping answer buried only in private_notes is inadequate.
 5. Rules: do not invent a bonus, check, or outcome. An unspecified rule is not a known zero modifier.
 Restating an explicitly recorded fact is allowed. Describing environmental results of a confirmed action is allowed.
 For each actual defect, quote an exact passage from the draft and explain it in one short sentence, with the correct issue kind.
@@ -84,6 +85,7 @@ def review_response(body, answer, model, options):
             )
         source = "\n".join(
             [
+                answer.direct_answer,
                 answer.narration,
                 *answer.questions,
                 *[c.text for c in answer.requested_checks],
@@ -92,8 +94,11 @@ def review_response(body, answer, model, options):
         )
         for issue in result.issues:
             source_quote(source, issue.quote)
+        revision = result.revision
+        if revision is not None and isinstance(answer, DirectAnswer):
+            revision = DirectAnswer.model_validate(revision.model_dump())
         trace["status"] = "revised" if result.issues else "no_issue_found"
-        return result.revision or answer, trace
+        return revision or answer, trace
     except Exception as exc:
         trace.update(
             status="not_reviewed",

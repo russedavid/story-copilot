@@ -55,10 +55,19 @@ class Models:
             "rules": rules
             or (
                 lambda body: RulesAnswer(
-                    answer="Please provide the missing inputs.",
-                    citations=[],
+                    answer="Consult the supplied fixture rule.",
+                    citations=[
+                        {
+                            "id": body["rules"][0]["id"],
+                            "quote": body["rules"][0]["text"],
+                        }
+                    ]
+                    if body["rules"]
+                    else [],
                     calculation=None,
-                    missing_information=["skill, roll and difficulty"],
+                    missing_information=[]
+                    if body["rules"]
+                    else ["A relevant rule excerpt"],
                 )
             ),
         }

@@ -14,11 +14,18 @@ def _tokenizer(path):
     )
 
 
-def context_options():
+def context_options(store=None):
     path = os.environ.get("STORY_TOKENIZER")
+    from .settings import load, DEFAULT
+
+    settings = load(store.home) if store is not None else DEFAULT
     return {
-        "context_limit": int(os.environ.get("STORY_CONTEXT_TOKENS", "16384")),
-        "output_reserve": int(os.environ.get("STORY_OUTPUT_TOKENS", "1800")),
+        "context_limit": int(
+            os.environ.get("STORY_CONTEXT_TOKENS", settings["context_limit"])
+        ),
+        "output_reserve": int(
+            os.environ.get("STORY_OUTPUT_TOKENS", settings["output_reserve"])
+        ),
         "safety_margin": int(os.environ.get("STORY_CONTEXT_MARGIN", "512")),
         "tokenizer": _tokenizer(path) if path else None,
     }
@@ -61,5 +68,5 @@ def build_with_budget(store, cid, before, **kwargs):
 
     return _with_budget(
         lambda **options: build_context(store, cid, before, **options),
-        {**context_options(), **kwargs},
+        {**context_options(store), **kwargs},
     )

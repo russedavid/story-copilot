@@ -424,3 +424,41 @@ def test_consistent_total_and_delta_apply_once_but_ambiguous_cases_are_rejected(
     event.value, event.delta = 5, -3
     with pytest.raises(ValueError, match="total or a delta"):
         _validate_event(event, [message], state)
+
+
+def test_missing_rule_information_ends_with_a_question_not_a_fictional_ruling(table):
+    class MissingRuleModels(Models):
+        def __call__(self, task):
+            if task != "rules":
+                return super().__call__(task)
+
+            class Adviser:
+                def complete(self, *args, **kwargs):
+                    return RulesAnswer(
+                        answer="Unsupported extra prose.",
+                        citations=[],
+                        calculation=None,
+                        missing_information=["A teamwork rule."],
+                    ), {}
+
+            return Adviser()
+
+    models = MissingRuleModels([Decision(action="respond", intent="rules")])
+    result = run(table, models)
+    trace = result["result"]["trace"]
+    assert (
+        trace["rules"]["requires_clarification"]
+        and trace["storyteller"]["clarification_only"]
+    )
+    assert not any(task == "storyteller" for task, *_ in models.calls)
+    assert all(
+        "Unsupported extra prose" not in p["text"]
+        for p in result["result"]["suggestions"]
+    )
+
+
+def test_direct_answer_does_not_require_an_invented_scene():
+    answer = NarrationAnswer(narration="", direct_answer="Three charges remain.")
+    assert answer.narration == "" and answer.direct_answer.startswith("Three")
+    with pytest.raises(ValueError, match="Provide an answer"):
+        NarrationAnswer(narration="")

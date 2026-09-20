@@ -50,6 +50,6 @@ pip install -e '.[dev]'
 python -m pytest -q
 ```
 
-The test suite exercises source corrections, dialogue ordering, character knowledge, session continuity, context budgets, audio queues, stale answers, duplicate suppression, rule isolation, and bounded tool use. Scripted model tests verify application behavior; live model evaluation is separate. See [architecture](docs/architecture.md) and [evaluation](docs/evaluation.md).
+The test suite exercises source corrections, dialogue ordering, character knowledge, session continuity, context budgets, audio queues, stale answers, duplicate suppression, rule isolation, and bounded tool use. Scripted model tests verify application behavior; live model evaluation is separate. See [architecture](docs/architecture.md), [evaluation](docs/evaluation.md), and the [recorded development findings](docs/validation.md).
 
 The companion [Qwen adapter toolkit](https://github.com/russedavid/qwen-ttrpg) trains and evaluates task adapters from data you supply. [Conversational Dataset Formatter](https://github.com/russedavid/format_conversation_dataset) prepares reviewed conversational targets with completion-only loss masks. Those projects manage data preparation and model training; this repository contains the interactive application. No training data or model weights are included.

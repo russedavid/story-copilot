@@ -51,6 +51,8 @@ def create_app(store=None):
         htmx=False,
         htmx4=True,
         secret_key=keypath.read_text(),
+        session_cookie="story_copilot_session",
+        canonical=False,
     )
     rt = app.route
     workers = ThreadPoolExecutor(max_workers=1, thread_name_prefix="facilitator-model")
@@ -290,7 +292,10 @@ def create_app(store=None):
                         cls="row",
                     ),
                     P(result["error"], cls="notice") if result.get("error") else None,
-                    P(answer["narration"]) if answer else None,
+                    P(answer.get("direct_answer"))
+                    if answer.get("direct_answer")
+                    else None,
+                    P(answer["narration"]) if answer.get("narration") else None,
                     Ul(
                         *[
                             Li(x)

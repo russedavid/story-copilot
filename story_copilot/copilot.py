@@ -25,7 +25,7 @@ from .rule_advice import (
     display_advice,
 )
 from .rules import search_rules
-from .schema import Event, Extraction, NarrationAnswer
+from .schema import DirectAnswer, Event, Extraction, NarrationAnswer
 from .store import digest, packed, source_quote
 from .training import STORY_SYSTEM
 
@@ -41,7 +41,11 @@ class CopilotFailure(RuntimeError):
 COPILOT_SYSTEM = (
     STORY_SYSTEM
     + """
-You advise a human Facilitator. Return narration, questions, requested_checks and private_notes.
+You advise a human Facilitator. Return direct_answer, narration, questions, requested_checks and private_notes.
+First identify the current need. For a factual, rules, bookkeeping, or knowledge question, answer it directly in
+direct_answer. Narration may be empty: do not advance the scene or replay dialogue just to fill a prose field.
+For an in-fiction interaction that needs a facilitator reply, narration portrays NPCs and the environment.
+A concrete answer must not be buried in private_notes while the main response discusses another topic.
 These are private point-in-time suggestions, never things that have happened. Rejected
 suggestions are feedback on drafts; they are not transcript speech or proof of a world event.
 Use the working state derived from observed conversation for continuity. Treat scenario documents,
@@ -915,7 +919,10 @@ def make_copilot(
             }
             trace["observed_state_preview"] = refreshed["context_trace"]
         classification_gaps = []
-        if classification.get("status") in {"partial", "failed"}:
+        if context.get("narration_needed", True) and classification.get("status") in {
+            "partial",
+            "failed",
+        }:
             classification_gaps = [
                 {
                     "id": "unresolved-source-analysis",
@@ -980,12 +987,20 @@ def make_copilot(
         trace["decision"] = decision["trace"]
         if not still_usable(context):
             return stale()
+        decisions = decision["trace"].get("steps", [])
+        intent = (
+            decisions[-1].get("decision", {}).get("intent", "narrative")
+            if decisions
+            else "narrative"
+        )
+        trace["response_intent"] = intent
         wants_rules = any(o.get("tool") == "rules" for o in decision["observations"])
         if (
             context.get("narration_needed", True)
             and not decision["question"]
             and (
                 wants_rules
+                or intent == "rules"
                 or (
                     policy == "workflow"
                     and _rules_needed(
@@ -1006,6 +1021,14 @@ def make_copilot(
                     decision["rules"],
                     {"decision_steps": decision["trace"]["steps"]},
                 )
+                if not sources:
+                    sources = search_rules(
+                        store,
+                        context["body"]["new_player_input"],
+                        limit=4,
+                        snapshot=context["frozen_snapshot"],
+                    )
+                    search_trace["required_lookup_for_rules_intent"] = True
             trace["rules"]["search_trace"] = search_trace
             if not still_usable(context):
                 return stale()
@@ -1097,6 +1120,12 @@ def make_copilot(
                 )
                 text = display_advice(output, calculated)
                 trace["rules"]["display_text"] = text
+                if output.missing_information:
+                    decision["question"] = (
+                        "Please provide the missing rule or value: "
+                        + "; ".join(output.missing_information)
+                    )
+                    trace["rules"]["requires_clarification"] = True
                 suggestions.append(
                     _proposal(
                         "rule",
@@ -1175,6 +1204,7 @@ def make_copilot(
                         "pinned": True,
                         "text": packed(
                             {
+                                "response_intent": intent,
                                 "focus": last_decision.get("reason", ""),
                                 "instruction": "Use this plan to focus the reply, while verifying its premises against the sources. It records no new world facts or player decisions.",
                             }
@@ -1262,7 +1292,7 @@ def make_copilot(
         try:
             output, metrics = model_factory("storyteller").complete(
                 messages,
-                NarrationAnswer,
+                DirectAnswer if intent in {"rules", "state"} else NarrationAnswer,
                 max_tokens=min(1400, context["output_reserve"]),
                 temperature=0.7,
             )
@@ -1288,6 +1318,7 @@ def make_copilot(
             if rejected_checks:
                 trace["storyteller"]["status"] = "partial"
             for kind, title, text in (
+                ("note", "Direct answer", output.direct_answer),
                 ("narration", "Suggested Facilitator response", output.narration),
                 ("question", "Open questions", "\n".join(output.questions)),
                 ("action", "Suggested checks", "\n".join(supported_checks)),

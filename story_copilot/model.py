@@ -170,6 +170,12 @@ class LocalModel:
         return result, metrics
 
 
+def workspace_model(store, task):
+    from .settings import load
+
+    return LocalModel(task=task, configuration=load(store.home))
+
+
 def extraction_request(store, cid, start, end):
     turns = store.turns(cid)
     selected = [t for t in turns if start <= t["ordinal"] <= end]
@@ -203,7 +209,7 @@ def extract(store, cid, start, end, model=None, run_id=None, request=None):
     request = request or extraction_request(store, cid, start, end)
     rid = run_id or store.start_run(cid, "extract", request)
     try:
-        result, metrics = (model or LocalModel(task="classifier")).complete(
+        result, metrics = (model or workspace_model(store, "classifier")).complete(
             request["messages"], Extraction
         )
         current = {str(t["ordinal"]): t["revision"] for t in store.turns(cid)}
@@ -290,7 +296,7 @@ def draft(
     request = request or draft_request(store, cid, before, player_input, direction)
     rid = run_id or store.start_run(cid, "facilitator", request)
     try:
-        result, metrics = (model or LocalModel(task="storyteller")).complete(
+        result, metrics = (model or workspace_model(store, "storyteller")).complete(
             request["messages"],
             NarrationAnswer,
             max_tokens=request.get("trace", {}).get("output_reserve", 1800),

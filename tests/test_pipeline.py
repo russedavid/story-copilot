@@ -543,3 +543,53 @@ def test_diarization_comparison_aligns_arbitrary_speaker_ids():
     right["segments"][0]["words"][0]["word"] = "different"
     with pytest.raises(ValueError, match="same aligned words"):
         compare(left, right)
+
+
+def test_library_calls_use_the_selected_workspace_model_and_context_budget(
+    library, monkeypatch
+):
+    from story_copilot.settings import save
+    import story_copilot.model as provider
+
+    store, cid, _ = library
+    save(
+        store.home,
+        {
+            "model": "workspace-choice",
+            "url": "http://model.example/v1",
+            "context_limit": 8192,
+            "output_reserve": 1024,
+        },
+    )
+    calls = []
+
+    class Client:
+        def __init__(self, *, task, configuration):
+            calls.append((task, configuration))
+
+        def complete(self, messages, schema, **kwargs):
+            return (
+                Extraction()
+                if schema is Extraction
+                else NarrationAnswer(narration="An optional response.")
+            ), {}
+
+    monkeypatch.setattr(provider, "LocalModel", Client)
+    for turn in store.turns(cid):
+        store.revise(
+            turn["id"],
+            text=turn["text"],
+            role="facilitator" if turn["speaker"] == "SPEAKER_00" else "player",
+            status="approved",
+        )
+    extract(store, cid, 1, 1)
+    request = draft_request(store, cid, 2, player_input="What is visible?")
+    assert request["trace"]["context_limit"] == 8192
+    assert request["trace"]["output_reserve"] == 1024
+    draft(store, cid, 2, request=request)
+    assert [task for task, _ in calls] == ["classifier", "storyteller"]
+    assert all(
+        config["model"] == "workspace-choice"
+        and config["url"] == "http://model.example/v1"
+        for _, config in calls
+    )

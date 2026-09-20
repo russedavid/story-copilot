@@ -75,21 +75,34 @@ def test_generation_schema_forces_valid_event_shapes_without_losing_fragments():
         "value": 6,
         "delta": None,
         "evidence": [{"turn": 1, "quote": "I have 6 supplies."}],
+        "resolves": None,
+        "supersedes": None,
+        "rationale": "",
+        "visibility": "public",
     }
-    assert not list(validator.iter_errors({"events": [base]}))
+    assert not list(validator.iter_errors({"events": [base], "uncertainties": []}))
     for changes in [
         {"delta": -2},
         {"stage": "reported"},
         {"kind": "fact", "resolves": "old-action"},
     ]:
-        assert list(validator.iter_errors({"events": [{**base, **changes}]}))
+        assert list(
+            validator.iter_errors(
+                {"events": [{**base, **changes}], "uncertainties": []}
+            )
+        )
     assert not list(
         validator.iter_errors(
-            {"events": [{**base, "kind": "claim", "stage": "reported"}]}
+            {
+                "events": [{**base, "kind": "claim", "stage": "reported"}],
+                "uncertainties": [],
+            }
         )
     )
     assert not list(
-        validator.iter_errors({"events": [{**base, "value": None, "delta": -2}]})
+        validator.iter_errors(
+            {"events": [{**base, "value": None, "delta": -2}], "uncertainties": []}
+        )
     )
 
 

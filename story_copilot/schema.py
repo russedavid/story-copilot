@@ -76,10 +76,32 @@ class CheckSuggestion(BaseModel):
 
 class NarrationAnswer(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    narration: str = Field(min_length=1)
+    narration: str
+    direct_answer: str = Field(default="", max_length=2400)
     questions: list[str] = Field(default_factory=list)
     requested_checks: list[CheckSuggestion] = Field(default_factory=list)
     private_notes: str = ""
+
+    @model_validator(mode="after")
+    def usable(self):
+        if not (
+            self.narration.strip()
+            or self.direct_answer.strip()
+            or any(q.strip() for q in self.questions)
+            or self.requested_checks
+            or self.private_notes.strip()
+        ):
+            raise ValueError(
+                "Provide an answer, a useful scene response, or a concrete question."
+            )
+        return self
+
+
+class DirectAnswer(NarrationAnswer):
+    """A practical answer should not require an unrelated scene."""
+
+    direct_answer: str = Field(min_length=1, max_length=2400)
+    narration: Literal[""] = ""
 
 
 class ResourceTotalCandidate(EventCandidate):

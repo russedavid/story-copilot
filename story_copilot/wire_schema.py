@@ -3,20 +3,27 @@
 import copy
 
 
-WIRE_SCHEMA_VERSION = 3
+WIRE_SCHEMA_VERSION = 4
 
 
 def wire_schema(model):
     schema = copy.deepcopy(model.model_json_schema())
-    explicit = model.__name__ == "Extraction"
+    explicit = model.__name__ in {
+        "Extraction",
+        "GenerationExtraction",
+        "Decision",
+        "NarrationAnswer",
+        "DirectAnswer",
+        "ResponseReview",
+    }
 
     def visit(value):
         if isinstance(value, dict):
             if "properties" in value:
                 value["properties"] = dict(sorted(value["properties"].items()))
                 if explicit:
-                    # All event fields must be present, with null where unused.
-                    # Missing delta/stage/resolves silently changes event meaning.
+                    # Explicit fields avoid ambiguous event defaults and prevent
+                    # a model from omitting the answer slot to end a response early.
                     value["required"] = list(value["properties"])
             for child in value.values():
                 visit(child)

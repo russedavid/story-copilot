@@ -5,7 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from .mechanics import grounded_calculation, numeric_sources
-from .model import LocalModel, ModelResponseError
+from .model import ModelResponseError, workspace_model
 from .rules import search_rules, rule_query_terms
 from .store import source_quote
 
@@ -124,7 +124,7 @@ def retrieve_rules(store, question, planner=None, *, snapshot=None):
     ]
     trace = {}
     try:
-        plan, trace = (planner or LocalModel(task="auditor")).complete(
+        plan, trace = (planner or workspace_model(store, "auditor")).complete(
             messages, RuleSearchPlan, max_tokens=200, temperature=0
         )
         queries = list(
@@ -173,7 +173,7 @@ def advise(store, question, model=None, planner=None):
         {"role": "user", "content": packed({"question": question, "rules": sources})},
     ]
     try:
-        answer, metrics = (model or LocalModel(task="rules")).complete(
+        answer, metrics = (model or workspace_model(store, "rules")).complete(
             messages, RulesAnswer, max_tokens=1200, temperature=0
         )
     except Exception as exc:
