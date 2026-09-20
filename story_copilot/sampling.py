@@ -25,8 +25,6 @@ def sampling(task, temperature=None, profile="production"):
         }
     if task in {"storyteller", "player"}:
         settings = NARRATIVE_SAMPLING.copy()
-        if task == "player":
-            settings["presence_penalty"] = 0.0
         if temperature is not None:
             settings["temperature"] = temperature
         return settings

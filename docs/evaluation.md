@@ -21,3 +21,17 @@ python -m story_copilot.evaluate --home /path/to/workspace --output /path/to/new
 It creates separate campaign workspaces for the agent and workflow policies, alternates their execution order, and saves each full trace. Open `index.html` for a side-by-side review and record judgments in `review.json`. The run uses your configured model endpoint; it does not download a model or turn on audio. Keep this evaluation directory outside Git.
 
 The response editing pass is part of both policies in the current comparison. Its verdict is an application output, not an evaluation label. An external review may disagree with it. For example, it may correctly remove invented dialogue while being overcautious about a harmless restatement of something a player already said. Keep original and revised drafts available, and judge the final assistance against the source.
+
+## Player agents
+
+Run the original player scenarios with two adapters already loaded and listed in Model settings:
+
+```sh
+python -m story_copilot.player_eval --home /path/to/workspace \
+  --output /path/to/new/private/player-evaluation \
+  --curious-adapter 3 --decisive-adapter 4
+```
+
+Use the actual adapter IDs from your server. The six cases cover a shared choice, a character-private clue, and a source correction during generation for each identity. The runner checks what reached the model, which adapter was selected, whether a turn was posted, duplicate suppression, and unchanged world state. Read `review.html` for utterances and full traces. Record semantic judgments in each case's `quality_review` in `report.json`; the renderer displays those judgments separately from automatic checks. Set `STORY_EXPERIMENTS` to the private report directory's parent to browse reports in the app.
+
+For training comparisons, use the companion toolkit's paired benchmark and review shuffled responses before unblinding. A repeated run after changing sampling is a development check. It does not restore the independence of cases already used to choose the change.

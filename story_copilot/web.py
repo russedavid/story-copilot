@@ -479,7 +479,14 @@ def create_app(store=None):
             if path.name == "index.html" and (path.parent / "result.json").exists():
                 metadata = path.parent / "result.json"
             elif not metadata.exists() and path.name == "review.html":
-                metadata = path.parent / "report.json"
+                metadata = next(
+                    (
+                        path.parent / name
+                        for name in ("report.json", "results.json")
+                        if (path.parent / name).is_file()
+                    ),
+                    metadata,
+                )
             try:
                 report = json.loads(metadata.read_text())
             except (OSError, ValueError):
@@ -489,7 +496,9 @@ def create_app(store=None):
                 description = (
                     f"{count}/{report.get('expected_cases', count)} cases · "
                     + (
-                        "paired response review"
+                        "player workflow review"
+                        if report["cases"] and "run" in report["cases"][0]
+                        else "paired response review"
                         if path.suffix == ".html"
                         else "completion loss comparison"
                     )

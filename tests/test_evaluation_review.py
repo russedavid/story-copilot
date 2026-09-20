@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from starlette.testclient import TestClient
 
 from story_copilot.evaluate import render
@@ -60,3 +62,18 @@ def test_review_trace_links_work_without_exposing_neighboring_files(
         assert (
             c.get(f"/experiments/{key}/trace/../model-settings.json").status_code == 404
         )
+
+
+@pytest.mark.parametrize("metadata", ["report.json", "results.json"])
+def test_player_and_toolkit_reviews_are_discoverable(tmp_path, monkeypatch, metadata):
+    experiments = tmp_path / "experiments"
+    report = experiments / "players"
+    report.mkdir(parents=True)
+    (report / "review.html").write_text("<h1>Response review</h1>")
+    (report / metadata).write_text(json.dumps({"cases": [{"id": "original"}]}))
+    monkeypatch.setenv("STORY_EXPERIMENTS", str(experiments))
+    key = digest("players/review.html")[:20]
+    with TestClient(create_app(Store(tmp_path / "workspace"))) as c:
+        assert f"/experiments/{key}" in c.get("/experiments").text
+        assert "Response review" in c.get(f"/experiments/{key}").text
+        assert c.get(f"/experiments/{key}/trace/{metadata}").status_code == 404

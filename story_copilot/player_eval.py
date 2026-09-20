@@ -33,11 +33,17 @@ def render(report, output):
             + esc(case["expect"])
             + "</p><p>"
             + esc(case["checks"])
-            + "</p><h3>Player contribution</h3><pre>"
+            + "</p><p>Elapsed: "
+            + esc(case["seconds"])
+            + " seconds</p><h3>Player contribution</h3><pre>"
             + esc(answer.get("utterance", "No posted utterance."))
             + "</pre><p>Recipient: "
             + esc(answer.get("recipient", ""))
-            + "</p><details><summary>Complete context and trace</summary><pre>"
+            + "</p><h3>Semantic review</h3><pre>"
+            + esc(
+                json.dumps(case.get("quality_review", "pending"), indent=2, ensure_ascii=False)
+            )
+            + "</pre><details><summary>Complete context and trace</summary><pre>"
             + esc(json.dumps(run, indent=2, ensure_ascii=False))
             + "</pre></details></section>"
         )
