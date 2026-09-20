@@ -8,6 +8,8 @@ Tasks include current and corrected resource counts, affordable and unaffordable
 
 The checker verifies the structured conclusion, exact relevant source IDs, and whether those sources were actually seen. A correct guess with unseen citations does not pass. A small discovery reward supports exploration; it is reported separately from task success. Repeated calls, unnecessary calls, invalid actions, and truncated attempts are recorded. Always asking a question or listing every retrieved source cannot earn task success.
 
+Declared alternative evidence sets can support the same conclusion. An unknown balance can be established by the sheet or a later inventory note; a missing rule does not require an unrelated balance lookup. A model can recover from a format error and still complete the task, with the error recorded and penalized.
+
 The environment shares the production `Decision` actions and adds typed terminal fields for the experiment: `value`, `allowed`, `sources`, and `missing`. Those fields make outcome checks explicit. Free-form rationale and clarification wording still require semantic review. A successful score does not establish narrative quality or justify deploying an adapter.
 
 The companion [Qwen toolkit](https://github.com/russedavid/qwen-ttrpg) contains the GPU runner. Its supervised warm-up and GRPO paths train only a small LoRA, preserve model-generated tokens across tool steps, and mask external evidence out of the learning target. Independent base, supervised-only, and RL evaluations are required before judging improvement. Training data, checkpoints, and review traces belong in a separate private output directory.

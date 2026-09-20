@@ -7,6 +7,8 @@ the literary quality of a rationale. No source transcripts or live stores are us
 from copy import deepcopy
 import json
 import random
+import re
+from typing import Literal
 
 from pydantic import Field, StrictBool, StrictInt
 
@@ -14,7 +16,7 @@ from .decisions import Decision, read_evidence
 from .rules import campaign_rule_chunks
 from .store import digest, packed
 
-VERSION = "evidence-decisions-v1"
+VERSION = "evidence-decisions-v2"
 TRAIN_FAMILIES = ("sheet", "correction", "activation", "missing_balance", "missing_rule", "visible")
 TRANSFER_FAMILIES = ("two_corrections", "different_character", "changed_cost")
 
@@ -23,7 +25,7 @@ class EvidenceDecision(Decision):
     value: StrictInt | None = None
     allowed: StrictBool | None = None
     sources: list[str] = Field(default_factory=list, max_length=8)
-    missing: list[str] = Field(default_factory=list, max_length=2)
+    missing: list[Literal["balance", "rule"]] = Field(default_factory=list, max_length=2)
 
 
 INSTRUCTIONS = """You are the evidence decision-maker for a storytelling copilot.
@@ -130,6 +132,17 @@ def make_case(seed, family, *, split="train"):
     snapshot = {"characters": [sheet, other_sheet], "messages": messages, "documents": documents}
     if activation:
         required.append(next(c["id"] for c in campaign_rule_chunks(snapshot) if c["document_id"] == sid("rules")))
+    alternatives = [required]
+    # A known missing input is enough for a targeted clarification. Requiring
+    # unrelated known facts here would teach wasteful tool calls.
+    if family == "missing_balance":
+        required = [sheet["id"]]
+        alternatives = [required, [sid("latest")]]
+        expert = [{"action": "character", "character": name}]
+    elif family == "missing_rule":
+        required = [required[-1]]
+        alternatives = [required]
+        expert = [{"action": "rules", "query": device}]
     visible = []
     if family == "visible":
         visible = [note]
@@ -149,7 +162,8 @@ def make_case(seed, family, *, split="train"):
     return {"id": case_id, "split": split, "family": family, "seed": seed,
             "prompt": [{"role": "system", "content": INSTRUCTIONS}, {"role": "user", "content": packed(public)}],
             "context": {"frozen_snapshot": snapshot, "state": {}},
-            "expected": answer, "expert": expert + [answer], "minimum_calls": len(expert)}
+            "expected": answer, "source_alternatives": alternatives,
+            "expert": expert + [answer], "minimum_calls": len(expert)}
 
 
 def make_suite(count_per_family=12, *, split="train", start_seed=0):
@@ -175,7 +189,9 @@ class EvidenceEpisode:
         entry = {"raw": raw}
         self.trace.append(entry)
         try:
-            data = json.loads(raw)
+            text = raw.strip()
+            fence = re.fullmatch(r"```(?:json)?\s*\n(.*?)\n```", text, re.DOTALL | re.IGNORECASE)
+            data = json.loads(fence.group(1) if fence else text)
             decision = EvidenceDecision.model_validate(data)
             entry["decision"] = decision.model_dump(exclude_defaults=True)
             if decision.action in {"respond", "clarify"}:
@@ -216,16 +232,16 @@ class EvidenceEpisode:
     def assessment(self):
         expected = self.case["expected"]
         final = self.final or {}
-        required = set(expected["sources"])
+        alternatives = [set(ids) for ids in self.case["source_alternatives"]]
         cited = set(final.get("sources", []))
         exact = all(final.get(k) == expected[k] for k in ["action", "value", "allowed"])
         exact = exact and set(final.get("missing", [])) == set(expected["missing"])
-        grounded = required <= cited and cited <= self.seen and cited <= required
+        grounded = cited in alternatives and cited <= self.seen
         valid_question = expected["action"] != "clarify" or bool(final.get("question", "").strip())
-        success = bool(exact and grounded and valid_question and not self.invalid)
+        success = bool(exact and grounded and valid_question)
         # Small source-discovery shaping supports exploration. It never confers
         # task success; grades and reports keep correctness separate from reward.
-        discovery = len(required & self.seen) / max(1, len(required))
+        discovery = max(len(required & self.seen) / max(1, len(required)) for required in alternatives)
         extra = max(0, self.calls - self.case["minimum_calls"])
         reward = (1.0 if success else 0.0) + 0.1 * discovery - 0.02 * extra - 0.05 * self.invalid
         return {"success": success, "correct_fields": bool(exact), "grounded": grounded,

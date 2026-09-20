@@ -69,6 +69,25 @@ def test_missing_information_has_a_grounded_clarification_and_answerable_variant
         assert episode.final["allowed"] is None
 
 
+def test_equivalent_sources_and_recovery_do_not_require_useless_tool_calls():
+    case = make_case(3, "missing_balance")
+    for alternative in case["source_alternatives"]:
+        episode = EvidenceEpisode(case)
+        if alternative == case["expected"]["sources"]:
+            episode.step(json.dumps(case["expert"][0]))
+        else:
+            name = case["context"]["frozen_snapshot"]["characters"][0]["name"]
+            episode.step(json.dumps({"action": "recall", "query": name}))
+        episode.step(json.dumps({**case["expected"], "sources": alternative}))
+        assert episode.assessment()["success"] and episode.calls == 1
+    case = make_case(4, "visible")
+    episode = EvidenceEpisode(case)
+    episode.step('{"action":"wrong"}')
+    episode.step('```json\n' + json.dumps(case["expected"]) + '\n```')
+    assert episode.assessment()["success"]
+    assert episode.assessment()["invalid_actions"] == 1
+
+
 def test_tool_budget_repeated_requests_and_episode_reset():
     case = make_case(4, "correction")
     a, b = EvidenceEpisode(case), EvidenceEpisode(case)
