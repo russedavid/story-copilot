@@ -1,0 +1,19 @@
+# How the copilot works
+
+A SQLite workspace stores campaign documents, character sheets, participants, conversation revisions, observed events, private suggestions, and complete run traces. Original source text is retained when an operator corrects a message.
+
+Each request freezes a source snapshot. A classifier proposes exactly cited events from the unprocessed conversation. The application validates each proposal independently, preserves uncertainties and rejected fragments, and derives a working state. Requested actions, reported claims, and established outcomes remain distinct. Generated suggestions never become source evidence.
+
+The default evidence loop can take four decisions within a 75-second planning budget. It may recall a complete earlier dialogue exchange, inspect a character's initial sheet and current resources/knowledge, search this campaign's rule documents, ask a clarification, or proceed to a response. Repeated identical searches are rejected. Every step records its arguments, evidence, timing, and failures. This is application-level orchestration around an ordinary instruction-following model; it does not require model training.
+
+Rule retrieval uses SQLite FTS5 over the frozen campaign documents labelled as rules. There is no fallback to another campaign's library. Rule advice must cite a supplied source and an exact supporting quotation, or identify missing information. Arithmetic tools are declared by the campaign using a small whitelist of operations. Every input references an explicit numeric slot from current resources, dialogue, or a supplied rule. The application computes the result; it does not roll dice or change state from a calculation.
+
+The narrator receives the current state and source-linked evidence through the context packer. It returns a suggested response, questions, requested checks, and private notes. Missing inputs should become questions. If complete required evidence cannot fit, the app reports that gap instead of silently discarding a tool result.
+
+Context packing retains the current exchange and relevant earlier exchanges, within a configured prompt/output budget. With a local tokenizer it counts the model's chat template; without one it uses a conservative UTF-8 byte estimate. Set `STORY_TOKENIZER` to a local tokenizer directory and install `.[context]` to use native counting. Continuation and branch operations retain source lineage and avoid applying the same resource change twice.
+
+Source guards run between model/tool stages and before saving observations. Append-only conversation can retain an answer as private guidance for its original moment. Corrections, rule/profile changes, and incompatible source changes invalidate it. Background classification continues independently of whether another narrative answer is warranted.
+
+A single application worker schedules model requests. The model server owns weights and GPU placement; it can share one base across task adapters. This avoids loading separate full models for classification, rule advice, and narration. The independent evidence planner uses the base model. LoRA routing and inference scheduling depend on the server, and different adapter configurations may serialize. Optional speech recognition uses a separate worker and queue. Capture is explicitly started and stopped by the operator.
+
+The UI is FastHTML with its HTMX 4 integration. Signed sessions, CSRF tokens, and same-origin checks protect local mutations, including Firefox's same-origin `Origin: null` form submissions. The app binds to loopback. Private storage and API credentials are not public artifacts; there is no public-player deployment or autonomous messaging feature.
