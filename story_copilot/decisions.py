@@ -98,6 +98,34 @@ def recall(snapshot, query, limit=3):
     ]
 
 
+def read_evidence(store, context, decision):
+    """Execute the same read-only evidence action for live and training policies."""
+    snapshot = context["frozen_snapshot"]
+    if decision.action == "character":
+        character = next(
+            (c for c in snapshot["characters"] if c["name"] == decision.character),
+            None,
+        )
+        if character is None:
+            raise ValueError("Choose a character from this campaign's supplied list.")
+        state = context["state"]
+        return {
+            "initial_character_sheet": character,
+            "current_resources": {
+                k: v for k, v in state.get("resources", {}).items()
+                if k.startswith(decision.character + ":")
+            },
+            "knowledge": state.get("knowledge", {}).get(decision.character, {}),
+        }
+    if decision.action not in {"recall", "rules"}:
+        raise ValueError("Only read-only evidence actions can be executed here.")
+    if not decision.query.strip():
+        raise ValueError("An evidence search requires a query.")
+    if decision.action == "recall":
+        return recall(snapshot, decision.query)
+    return search_rules(store, decision.query, limit=4, snapshot=snapshot)
+
+
 def seek_evidence(
     store,
     context,
@@ -191,35 +219,8 @@ def seek_evidence(
                     "This tool request already has a result; choose a different useful step or respond."
                 )
             seen.add(identity)
-            if decision.action == "character":
-                character = next(
-                    (
-                        c
-                        for c in snapshot["characters"]
-                        if c["name"] == decision.character
-                    ),
-                    None,
-                )
-                if character is None:
-                    raise ValueError(
-                        "Choose a character from this campaign's supplied list."
-                    )
-                state = context["state"]
-                result = {
-                    "initial_character_sheet": character,
-                    "current_resources": {
-                        k: v
-                        for k, v in state.get("resources", {}).items()
-                        if k.startswith(decision.character + ":")
-                    },
-                    "knowledge": state.get("knowledge", {}).get(decision.character, {}),
-                }
-            elif not decision.query.strip():
-                raise ValueError("An evidence search requires a query.")
-            elif decision.action == "recall":
-                result = recall(snapshot, decision.query)
-            else:
-                result = search_rules(store, decision.query, limit=4, snapshot=snapshot)
+            result = read_evidence(store, context, decision)
+            if decision.action == "rules":
                 rules = list({item["id"]: item for item in [*rules, *result]}.values())
             observation = {
                 "tool": decision.action,
