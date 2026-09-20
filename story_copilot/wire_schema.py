@@ -3,7 +3,7 @@
 import copy
 
 
-WIRE_SCHEMA_VERSION = 2
+WIRE_SCHEMA_VERSION = 3
 
 
 def wire_schema(model):

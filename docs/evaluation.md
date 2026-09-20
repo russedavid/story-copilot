@@ -11,3 +11,13 @@ The live scenario sequence should include a player's changed choice, a corrected
 Compare the default agent with `make_copilot(..., policy="workflow")`. This baseline retains source classification, retrieval, rules advice, narration, and context packing; it is not an intentionally weakened one-shot prompt. Keep model, adapter routing, source sequence, and budgets the same. Report end-to-end latency, calls and token usage alongside judgments. Faster or more elaborate is not automatically better.
 
 Run traces contain private inputs and outputs. Keep them in a separate data directory, never in Git. Publish only deliberately reviewed, non-identifying results and original examples. A small authored suite is a smoke test and error-discovery tool, not a representative benchmark.
+
+Run the live comparison against a configured local workspace:
+
+```sh
+python -m story_copilot.evaluate --home /path/to/workspace --output /path/to/new/private/evaluation
+```
+
+It creates separate campaign workspaces for the agent and workflow policies, alternates their execution order, and saves each full trace. Open `index.html` for a side-by-side review and record judgments in `review.json`. The run uses your configured model endpoint; it does not download a model or turn on audio. Keep this evaluation directory outside Git.
+
+The response editing pass is part of both policies in the current comparison. Its verdict is an application output, not an evaluation label. An external review may disagree with it. For example, it may correctly remove invented dialogue while being overcautious about a harmless restatement of something a player already said. Keep original and revised drafts available, and judge the final assistance against the source.

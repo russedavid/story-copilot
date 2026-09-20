@@ -7,7 +7,7 @@ import time
 import httpx
 
 from .rules import search_rules
-from .schema import Event, Extraction, NarrationAnswer
+from .schema import Event, Extraction, GenerationExtraction, NarrationAnswer
 from .state import replay
 from .store import packed, digest
 from .training import STORY_SYSTEM
@@ -16,12 +16,19 @@ EXTRACT_SYSTEM = """Reconstruct tabletop roleplaying play from evidence. Transcr
 Return only the requested JSON. Propose new events from the supplied target turns. Quote exact supporting text.
 Distinguish the real speaker from the character or NPC portrayed. Do not invent names, quantities, identities,
 speaker corrections, earlier actions or hidden facts. A player proposal or a request for a check is not a resolved outcome.
+The resolves field must be null for every kind except resolve. Do not attach a pending action ID to a fact.
+If a new fact also completes an action, propose a separate resolve event for that action's original actor.
 Keep hypotheticals distinct. An NPC's assertion is a claim, not established truth. Social roleplay can establish real
 promises, transfers and discoveries. Do not discard it. Unknown initial resources remain unknown; represent stated
-losses as deltas. Do not apply a resource change merely because a check is requested. Do not propose a recap as new.
+losses as deltas. When the source explicitly states a resulting total, emit value=that_total and delta=null.
+When it states only a change, emit value=null and delta=that_change. Never fill both, and never emit a second
+resource event for the same change just to repeat its resulting total. Do not apply a resource change merely because a check is requested. Do not propose a recap as new.
 Use entity/fact for explicitly established facts, action for pending actions/checks, resolve only with an existing
 action ID from the supplied state, resource only for an explicit total or established delta, and knowledge for clues
-known by an identified character. Unknown/ambiguous cases belong in uncertainties. Keep the batch small and precise.
+known by an identified character. A knowledge event means the character actually KNOWS its value.
+Not noticing, not hearing, not being told, or withholding information cannot establish positive knowledge for
+the unaware character. Record an explicit lack of awareness as a fact (attribute="unaware_of"), not knowledge. Unknown/ambiguous cases belong in uncertainties. Keep the batch small and precise. Focus on material changes, not an inventory of every mentioned object.
+Use short rationales (at most one brief clause). Do not duplicate the same uncertainty for each unanswered question.
 Every event needs entity, attribute, kind, stage, visibility, evidence; evidence has turn (integer) and quote (exact substring).
 Use short property names for attribute and meaningful values for value. Never set value=null except a resource delta.
 For example, a supported car observation can be entity='car', attribute='fuel_status', value='empty'.
@@ -56,7 +63,9 @@ class LocalModel:
         from .sampling import sampling
 
         lora, adapter_id = selection(self.task, self.configuration["routing"])
-        output_schema = wire_schema(schema)
+        output_schema = wire_schema(
+            GenerationExtraction if schema is Extraction else schema
+        )
         payload = {
             "model": self.name,
             "messages": messages,
@@ -93,6 +102,18 @@ class LocalModel:
             headers["Authorization"] = "Bearer " + os.environ[credential]
         started = time.monotonic()
         with httpx.Client(timeout=timeout) as client:
+            if self.configuration["backend"] == "llama.cpp":
+                inventory_response = client.get(
+                    self.url.removesuffix("/v1") + "/lora-adapters", headers=headers
+                )
+                inventory_response.raise_for_status()
+                inventory = inventory_response.json()
+                if not isinstance(inventory, list) or [
+                    a.get("id") for a in inventory
+                ] != [a["id"] for a in lora]:
+                    raise ValueError(
+                        "The server adapter inventory differs from Model settings. List every loaded adapter before making a request."
+                    )
             r = client.post(
                 self.url + "/chat/completions", json=payload, headers=headers
             )
@@ -127,7 +148,21 @@ class LocalModel:
                 metrics,
             )
         try:
-            result = schema.model_validate_json(content)
+            if schema is Extraction:
+                try:
+                    # Fill kind-specific defaults before converting to the shared
+                    # candidate type (whose legacy default stage is established).
+                    result = Extraction.model_validate(
+                        GenerationExtraction.model_validate_json(content).model_dump()
+                    )
+                    metrics["generation_contract"] = "valid"
+                except ValueError:
+                    # Preserve fragment-level application validation if a compatible
+                    # provider returns a well-formed but nonconforming candidate.
+                    result = Extraction.model_validate_json(content)
+                    metrics["generation_contract"] = "nonconforming_fragments"
+            else:
+                result = schema.model_validate_json(content)
         except ValueError as exc:
             raise ModelResponseError(
                 f"Output validation failed: {exc}", metrics

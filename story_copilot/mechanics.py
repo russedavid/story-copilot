@@ -82,6 +82,7 @@ def numeric_sources(messages, state, rules=()):
                     "id": f"rule:{rule['id']}:{i}",
                     "value": value,
                     "label": rule.get("title", "Supplied rule"),
+                    "rule_id": rule["id"],
                     "quote": rule["text"],
                 }
             )

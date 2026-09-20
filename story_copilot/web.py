@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+import html
 import os
 import secrets
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, quote
 from uuid import uuid4
 
 from fasthtml.common import *
@@ -294,7 +295,10 @@ def create_app(store=None):
                         *[
                             Li(x)
                             for x in answer.get("questions", [])
-                            + answer.get("requested_checks", [])
+                            + [
+                                check["text"] if isinstance(check, dict) else check
+                                for check in answer.get("requested_checks", [])
+                            ]
                         ]
                     )
                     if answer
@@ -462,7 +466,9 @@ def create_app(store=None):
             reverse=True,
         ):
             metadata = path.with_suffix(".json") if path.suffix == ".html" else path
-            if not metadata.exists() and path.name == "review.html":
+            if path.name == "index.html" and (path.parent / "result.json").exists():
+                metadata = path.parent / "result.json"
+            elif not metadata.exists() and path.name == "review.html":
                 metadata = path.parent / "report.json"
             try:
                 report = json.loads(metadata.read_text())
@@ -512,12 +518,54 @@ def create_app(store=None):
             P("No comparisons have been generated yet.") if not cards else None,
         )
 
+    def report_assets(path):
+        manifest = path.parent / "result.json"
+        if path.name != "index.html" or not manifest.is_file():
+            return {}
+        report = json.loads(manifest.read_text())
+        names = {"result.json", "review.json"}
+        names.update(
+            result["trace_file"]
+            for case in report.get("cases", [])
+            for result in case.get("policies", {}).values()
+        )
+        return {
+            name: (path.parent / name).resolve()
+            for name in names
+            if (path.parent / name).resolve().is_relative_to(path.parent.resolve())
+            and (path.parent / name).suffix == ".json"
+            and (path.parent / name).is_file()
+        }
+
+    @rt("/experiments/{report_id}/trace/{asset_path:path}")
+    def experiment_trace(report_id: str, asset_path: str):
+        path = comparison_files().get(report_id)
+        asset = report_assets(path).get(asset_path) if path else None
+        if asset is None:
+            return PlainTextResponse("Trace not found.", status_code=404)
+        return FileResponse(
+            asset, media_type="application/json", headers={"Cache-Control": "no-store"}
+        )
+
     @rt("/experiments/{report_id}")
     def experiment_report(report_id: str):
         path = comparison_files().get(report_id)
         if path is None:
             return PlainTextResponse("Comparison not found.", status_code=404)
         if path.suffix == ".html":
+            assets = report_assets(path)
+            if assets:
+                document = path.read_text()
+                for name in assets:
+                    document = document.replace(
+                        'href="' + html.escape(name, quote=True) + '"',
+                        'href="/experiments/'
+                        + report_id
+                        + "/trace/"
+                        + quote(name)
+                        + '"',
+                    )
+                return HTMLResponse(document, headers={"Cache-Control": "no-store"})
             return FileResponse(
                 path, media_type="text/html", headers={"Cache-Control": "no-store"}
             )

@@ -13,6 +13,7 @@ from story_copilot.profiles import validate_profile
 from story_copilot.rule_advice import Calculation, RulesAnswer
 from story_copilot.rules import search_rules
 from story_copilot.schema import Extraction, NarrationAnswer
+from story_copilot.response_review import ResponseReview
 from story_copilot.settings import save, load
 from story_copilot.store import Store, packed
 from story_copilot.web import create_app
@@ -56,6 +57,8 @@ class Models:
                     if owner.on_decision:
                         owner.on_decision()
                     answer = next(owner.decisions)
+                elif schema is ResponseReview:
+                    answer = ResponseReview(issues=[], revision=None)
                 elif schema is Extraction:
                     answer = Extraction()
                 elif schema is RulesAnswer:
@@ -112,6 +115,7 @@ def test_default_agent_chooses_tools_then_preserves_private_guidance(table):
         "auditor",
         "rules",
         "storyteller",
+        "auditor",
     ]
     assert (
         trace["decision"]["steps"][0]["observation"]["result"]["current_resources"][
@@ -119,7 +123,7 @@ def test_default_agent_chooses_tools_then_preserves_private_guidance(table):
         ]["value"]
         == 3
     )
-    narrator = models.calls[-1][1]
+    narrator = next(body for task, body, _ in models.calls if task == "storyteller")
     assert any(d["id"] == "evidence-investigation" for d in narrator["documents"])
     assert len(c.messages(sid)) == 1
     assert c.state(sid)["resources"]["Vale:charge"]["value"] == 3
@@ -188,7 +192,9 @@ def test_repeated_tool_calls_are_bounded_and_visible(table):
     trace = result["result"]["trace"]["decision"]
     assert trace["status"] == "step_budget" and len(trace["steps"]) == 4
     assert "already has a result" in trace["steps"][1]["error"]
-    assert "uncertainties" in packed(models.calls[-1][1])
+    assert "uncertainties" in packed(
+        next(body for task, body, _ in models.calls if task == "storyteller")
+    )
     assert all(
         0 < kwargs["timeout"] <= 75
         for task, _, kwargs in models.calls
@@ -299,3 +305,122 @@ def test_new_app_refuses_to_modify_an_unrecognized_database(tmp_path):
     with pytest.raises(ValueError, match="unrecognized"):
         Store(tmp_path)
     assert (tmp_path / "library.sqlite").read_bytes() == b"existing database"
+
+
+def test_requested_checks_require_real_supplied_rule_quotes():
+    from story_copilot.copilot import validate_checks
+    from story_copilot.schema import CheckSuggestion
+
+    sources = [
+        {
+            "id": "supplied",
+            "text": "Crossing an unstable bridge requires a balance check.",
+        }
+    ]
+    checks = [
+        CheckSuggestion(
+            text="Balance check for crossing.",
+            rule_id="supplied",
+            quote="requires a balance check",
+        ),
+        CheckSuggestion(
+            text="Invented rule.", rule_id="remembered", quote="Make a check."
+        ),
+        CheckSuggestion(
+            text="Invented quotation.",
+            rule_id="supplied",
+            quote="Roll a perception check.",
+        ),
+    ]
+    accepted, rejected = validate_checks(checks, sources)
+    assert accepted == ["Balance check for crossing."]
+    assert len(rejected) == 2
+    assert rejected[1]["check"]["text"] == "Invented quotation."
+
+
+def test_withheld_check_does_not_repeat_an_otherwise_delivered_reply(table):
+    from story_copilot.schema import CheckSuggestion
+
+    class InvalidCheckModels(Models):
+        def __call__(self, task):
+            if task != "storyteller":
+                return super().__call__(task)
+
+            class Writer:
+                def complete(self, *args, **kwargs):
+                    return NarrationAnswer(
+                        narration="The choice is yours.",
+                        requested_checks=[
+                            CheckSuggestion(
+                                text="An invented check.",
+                                rule_id="absent",
+                                quote="Some imagined rule.",
+                            )
+                        ],
+                    ), {}
+
+            return Writer()
+
+    _, c, _, sid = table
+    result = run(table, InvalidCheckModels([Decision(action="respond")]))
+    assert result["result"]["trace"]["storyteller"]["status"] == "partial"
+    assert not any(p["kind"] == "action" for p in c.proposals(sid))
+    build, _ = make_copilot(table[0], model_factory=Models([]), context_options=CONFIG)
+    assert not build(c.snapshot(sid))["narration_needed"]
+
+
+def test_numeric_citation_is_verified_without_treating_a_resource_as_a_rule():
+    from story_copilot.rule_advice import validate_advice
+
+    sources = [
+        {"id": "rule1", "title": "Example rule", "text": "The device costs 1 charge."}
+    ]
+    numbers = numeric_sources([], {}, sources)
+    answer = RulesAnswer(
+        answer="Use the stated cost.",
+        citations=[{"id": numbers[0]["id"], "quote": "costs 1 charge"}],
+        calculation=None,
+        missing_information=[],
+    )
+    assert validate_advice(answer, sources, {}, numbers) is None
+    numbers.append({"id": "resource:charge", "value": 3, "quote": "3"})
+    answer.citations = [type(answer.citations[0])(id="resource:charge", quote="3")]
+    with pytest.raises(ValueError, match="rule citation"):
+        validate_advice(answer, sources, {}, numbers)
+
+
+def test_consistent_total_and_delta_apply_once_but_ambiguous_cases_are_rejected():
+    from story_copilot.copilot import _validate_event
+    from story_copilot.schema import EventCandidate
+
+    message = {
+        "id": "original",
+        "ordinal": 1,
+        "revision": "original",
+        "role": "player",
+        "text": "I spend 2 supplies; I have 6 left.",
+        "visibility": "public",
+    }
+    state = {"resources": {"Tess:supplies": {"value": 8}}}
+    event = EventCandidate(
+        kind="resource",
+        entity="Tess",
+        attribute="supplies",
+        value=6,
+        delta=-2,
+        evidence=[{"turn": 1, "quote": message["text"]}],
+    )
+    parsed, evidence = _validate_event(event, [message], state)
+    assert (
+        parsed.value == 6
+        and parsed.delta is None
+        and evidence[0]["quote"] == message["text"]
+    )
+    for prior in [None, 7, 9]:
+        with pytest.raises(ValueError, match="total or a delta"):
+            _validate_event(
+                event, [message], {"resources": {"Tess:supplies": {"value": prior}}}
+            )
+    event.value, event.delta = 5, -3
+    with pytest.raises(ValueError, match="total or a delta"):
+        _validate_event(event, [message], state)

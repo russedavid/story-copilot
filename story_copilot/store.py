@@ -53,6 +53,8 @@ def data_home():
 class Store:
     def __init__(self, home=None):
         self.home = Path(home or data_home()).resolve()
+        if any((p / ".git").exists() for p in [self.home, *self.home.parents]):
+            raise ValueError("Keep the private workspace outside source repositories.")
         self.home.mkdir(parents=True, exist_ok=True, mode=0o700)
         identity = self.home / "workspace.json"
         database = self.home / "library.sqlite"

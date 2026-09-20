@@ -28,11 +28,17 @@ Choose ONE next action. respond when evidence is sufficient; avoid unnecessary s
 recall searches earlier conversation, including corrections and the exchanges surrounding a match.
 character inspects a named character's current sheet and recorded knowledge.
 rules searches only rule documents attached to this campaign.
+Use rules before recommending a mechanical check or a numerical ruling, even when a rule is already visible
+in the initial context: the rules adviser verifies its citations and any calculation inputs.
 clarify asks one concrete question when intent, identity or a necessary input is missing.
 Never resolve a player's choice yourself or treat a request for another player's help as agreement.
+The table-control roster names who owns each player character. If one player asks another what they do,
+clarify can invite the addressed participant's reply. Do not plan or draft that character's reply yourself.
 Do not invent a rule, action outcome or private knowledge. Character knowledge is not party knowledge.
 Tool access is read-only. You cannot edit state, send messages, or publish guidance.
-Fill only the argument appropriate to your action and give a short rationale. Finish within the tool budget."""
+Fill only the argument appropriate to your action and give a short rationale. When choosing respond, use reason
+to give a brief response plan: which contributions to answer, what the NPC/world can supply, and which player
+choices must remain open. This plan is passed to the narrator. Finish within the tool budget."""
 
 
 def recall(snapshot, query, limit=3):
@@ -129,13 +135,9 @@ def seek_evidence(
             if is_rule(d)
         ],
     }
-    # The narrator has its own independently bounded context. The decision loop
-    # can start from a smaller recent view and request missing evidence explicitly.
+    # The existing packer preserves complete exchanges; do not slice its
+    # already-bounded dialogue into disconnected individual messages here.
     brief["current_context"] = deepcopy(brief["current_context"])
-    for key in ["recent_dialogue", "retrieved_history"]:
-        values = brief["current_context"].get(key)
-        if isinstance(values, list):
-            brief["current_context"][key] = values[-8:]
     for index in range(max_steps):
         if not still_usable():
             trace["status"] = "invalidated"
@@ -196,7 +198,7 @@ def seek_evidence(
                     raise ValueError(
                         "Choose a character from this campaign's supplied list."
                     )
-                state = context["body"]["state"]
+                state = context["state"]
                 result = {
                     "initial_character_sheet": character,
                     "current_resources": {

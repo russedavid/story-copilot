@@ -17,7 +17,13 @@ from .context import _Counter, pack_context
 from .model import EXTRACT_SYSTEM, LocalModel
 from .decisions import seek_evidence
 from .mechanics import numeric_sources
-from .rule_advice import RULES_SYSTEM, RulesAnswer, retrieve_rules, validate_advice
+from .rule_advice import (
+    RULES_SYSTEM,
+    RulesAnswer,
+    retrieve_rules,
+    validate_advice,
+    display_advice,
+)
 from .rules import search_rules
 from .schema import Event, Extraction, NarrationAnswer
 from .store import digest, packed, source_quote
@@ -45,13 +51,20 @@ Respect character-specific knowledge even when all private context is visible to
 Narration describes the world and NPCs in response to the players' stated choices.
 A player asking another player for help does not establish that the other player agrees;
 ask that player what they do. Do not script a player character's answer or cooperation.
+Continue from what players have already said. Do not rewrite their dialogue or perform their next turn.
+Narration may portray NPCs and the environment; it must leave every unresolved player response to its player.
 requested_checks contains only new, unresolved checks. Do not request the same check again
 merely to explain a roll already supplied. Use the validated tool outcome when available;
 if adjudication inputs are missing, ask for them instead of inventing an outcome or reroll.
 questions asks for decisions or missing information, not invented player dialogue."""
     + """
-Do not put summaries of past checks in requested_checks. Return an empty list when
-no new roll is needed; a roll summary belongs in narration or private_notes."""
+Answer outstanding contributions from all participants in the current exchange, not only the final speaker.
+The facilitator controls NPCs: propose their words or reactions in narration. Never ask a player to supply an NPC's reply.
+Questions for players concern only their own choices or missing information they can supply.
+requested_checks is only for a new mechanical check supported by supplied rules; observation, conversation and
+ordinary investigation are not automatically checks. Each check is {text, rule_id, quote}, citing an exact supplied
+rule excerpt authorizing it. If no applicable rule ID/quotation is available, leave requested_checks empty and ask a question instead. Return an empty list when no such check is established.
+Do not put summaries of past checks in requested_checks; a roll summary belongs in narration or private_notes."""
 )
 _MECHANICS = re.compile(
     r"\b(?:roll(?:ed|s)?|dice|skill|rules?|difficulty|damage|cost|calculate)\b",
@@ -143,10 +156,56 @@ def _event_identity(event, evidence, source_identities):
     return digest(packed(identity))
 
 
+def _resource_name(value, profile=None):
+    normalized = lambda text: re.sub(r"[\s_-]+", "", text).casefold()
+    aliases = {
+        normalized(k): normalized(v)
+        for k, v in (profile or {}).get("resource_aliases", {}).items()
+    }
+    word = normalized(value)
+    return aliases.get(word, word)
+
+
 def _validate_event(candidate, selected, state, profile=None):
-    event = Event.model_validate(
-        candidate.model_dump() if hasattr(candidate, "model_dump") else candidate
+    data = (
+        candidate.model_dump()
+        if hasattr(candidate, "model_dump")
+        else deepcopy(candidate)
     )
+    # A source may state both a change and its resulting total. Canonicalize only
+    # when a known prior total proves they describe one consistent transition,
+    # and the resulting number occurs in one exactly cited source statement.
+    if (
+        data.get("kind") == "resource"
+        and type(data.get("value")) is int
+        and type(data.get("delta")) is int
+    ):
+        matching = [
+            r
+            for key, r in state.get("resources", {}).items()
+            if key.startswith(data["entity"] + ":")
+            and _resource_name(key[len(data["entity"]) + 1 :], profile)
+            == _resource_name(data["attribute"], profile)
+        ]
+        evidence = data.get("evidence", [])
+        if (
+            len(matching) == 1
+            and type(matching[0].get("value")) is int
+            and matching[0]["value"] + data["delta"] == data["value"]
+            and len(evidence) == 1
+        ):
+            message = next(
+                (m for m in selected if m["ordinal"] == evidence[0]["turn"]), None
+            )
+            if message:
+                quote = source_quote(message["text"], evidence[0]["quote"])
+                values = [
+                    s["value"]
+                    for s in numeric_sources([{"id": message["id"], "text": quote}], {})
+                ]
+                if data["value"] in values:
+                    data["delta"] = None
+    event = Event.model_validate(data)
     lookup = {m["ordinal"]: m for m in selected}
     evidence = []
     for ref in event.evidence:
@@ -206,17 +265,8 @@ def _validate_event(candidate, selected, state, profile=None):
     if event.kind == "resource":
         # Only campaign-defined aliases can join differently named resources.
         # Separator/case normalization alone does not infer a game mechanic.
-        def normalized(value):
-            return re.sub(r"[\s_-]+", "", value).casefold()
-
-        aliases = {
-            normalized(k): normalized(v)
-            for k, v in (profile or {}).get("resource_aliases", {}).items()
-        }
-
         def resource_name(value):
-            key = normalized(value)
-            return aliases.get(key, key)
+            return _resource_name(value, profile)
 
         attributes = [
             key[len(event.entity) + 1 :]
@@ -281,6 +331,21 @@ def _rules_needed(trigger, state):
     )
 
 
+def validate_checks(checks, sources):
+    """A typed check needs an exact supplied rule citation before being displayed."""
+    lookup = {source["id"]: source for source in sources}
+    accepted, rejected = [], []
+    for check in checks:
+        try:
+            if check.rule_id not in lookup:
+                raise ValueError("No supplied rule authorizes this requested check.")
+            source_quote(lookup[check.rule_id]["text"], check.quote)
+            accepted.append(check.text)
+        except ValueError as exc:
+            rejected.append({"check": check.model_dump(), "error": str(exc)})
+    return accepted, rejected
+
+
 def make_copilot(
     store,
     *,
@@ -289,6 +354,7 @@ def make_copilot(
     classify_limit=12,
     classification_char_limit=12000,
     policy="agent",
+    quality_review=True,
 ):
     """Return ``(build_context(snapshot), generate(context))`` for Campaigns.
 
@@ -412,7 +478,7 @@ def make_copilot(
             reusable[run["id"]]
             and run["context_hash"] == fingerprint
             and run["result"].get("trace", {}).get("storyteller", {}).get("status")
-            == "complete"
+            in {"complete", "partial"}
             for run in runs
         )
         cached = {}
@@ -488,6 +554,31 @@ def make_copilot(
         feedback = snapshot.get("feedback", [])
         documents = deepcopy(snapshot.get("documents", [])) + deepcopy(
             list(extra_documents)
+        )
+        controls = {}
+        for message in messages:
+            actor = message.get("character") or message.get("speaker_mapping", {}).get(
+                "character"
+            )
+            if actor and _effective_role(message) == "player":
+                controls[actor] = message["speaker"]
+        for speaker, mapping in mappings.items():
+            if mapping.get("role") == "player" and mapping.get("character"):
+                controls[mapping["character"]] = speaker
+        documents.append(
+            {
+                "id": "table-control",
+                "title": "Who controls each player character",
+                "pinned": True,
+                "visibility": "private",
+                "text": packed(
+                    {
+                        "player_control": controls,
+                        "facilitator_control": "Environment and NPCs only.",
+                        "instruction": "The named participants alone supply new dialogue, decisions, and actions for their characters. A question addressed to one of these characters belongs to that participant; invite their reply rather than drafting it. Unmapped character sheets do not grant permission to take over a player.",
+                    }
+                ),
+            }
         )
         if feedback:
             direction += "\nDraft feedback below concerns selected or rejected suggestions only. Selection does not mean the suggestion was spoken or happened. Avoid repeating rejected suggestions."
@@ -692,10 +783,11 @@ def make_copilot(
             }
             config = options()
             counter = _Counter(config.get("tokenizer"), config.get("token_counter"))
+            classification_output = min(3000, config.get("context_limit", 16384) // 4)
             budget = (
                 config.get("context_limit", 16384)
                 - config.get("safety_margin", 512)
-                - 1400
+                - classification_output
             )
             while (
                 request["context_only"]
@@ -723,7 +815,7 @@ def make_copilot(
                         {"role": "user", "content": packed(request)},
                     ],
                     Extraction,
-                    max_tokens=1400,
+                    max_tokens=classification_output,
                     temperature=0,
                 )
                 classification["model"] = metrics
@@ -739,6 +831,16 @@ def make_copilot(
                             context["state"],
                             context["frozen_snapshot"].get("rule_profile", {}),
                         )
+                        if candidate.delta is not None and event.delta is None:
+                            classification.setdefault(
+                                "resource_transition_normalizations", []
+                            ).append(
+                                {
+                                    "original": candidate.model_dump(),
+                                    "canonical": event.model_dump(),
+                                    "basis": "Exactly cited resulting total equals the known prior total plus the stated delta; apply once.",
+                                }
+                            )
                         if event.attribute != candidate.attribute:
                             classification.setdefault(
                                 "resource_name_normalizations", []
@@ -812,6 +914,55 @@ def make_copilot(
                 "context_trace": refreshed["context_trace"],
             }
             trace["observed_state_preview"] = refreshed["context_trace"]
+        classification_gaps = []
+        if classification.get("status") in {"partial", "failed"}:
+            classification_gaps = [
+                {
+                    "id": "unresolved-source-analysis",
+                    "title": "Unresolved source analysis",
+                    "visibility": "private",
+                    "pinned": True,
+                    "text": packed(
+                        {
+                            "status": classification["status"],
+                            "errors": [
+                                entry.get("error", "")
+                                for entry in classification.get(
+                                    "rejected_fragments", []
+                                )
+                            ],
+                            "source_messages": selected,
+                            "instruction": "Some current contributions could not be converted into validated state. The working state may therefore be incomplete or older than these source messages. Do not treat an earlier resource total or knowledge record as confirmation of the latest contribution. Use the explicit source wording or ask about the unresolved fact; rejected model interpretations are not facts.",
+                        }
+                    ),
+                }
+            ]
+            try:
+                refreshed = build_context(
+                    context["frozen_snapshot"], extra_documents=classification_gaps
+                )
+                context = {**context, "body": refreshed["body"]}
+            except ValueError:
+                # Preserve the full source gap in the run trace, and keep the
+                # narrator from silently falling back to apparently complete state.
+                trace["unresolved_source_context"] = classification_gaps
+                suggestions.append(
+                    _proposal(
+                        "question",
+                        "Current source needs review",
+                        "I could not fit the unresolved source details into this response. Review the latest conversation before relying on the working state.",
+                    )
+                )
+                trace["storyteller"] = {
+                    "status": "failed",
+                    "error": "Unresolved source context exceeds the response budget.",
+                }
+                trace["seconds"] = round(time.perf_counter() - started, 6)
+                return (
+                    stale()
+                    if not still_usable(context)
+                    else {"suggestions": suggestions[:20], "trace": trace}
+                )
         decision = {
             "trace": {"status": "workflow"},
             "observations": [],
@@ -877,7 +1028,7 @@ def make_copilot(
                     }
                     for message in context["current_messages"]
                 ],
-                "accepted_state": context["body"]["state"],
+                "working_state": context["body"]["state"],
                 "profile": context["frozen_snapshot"].get("rule_profile", {}),
                 # Draft feedback guides writing, but is not source evidence for
                 # the rules expert. Otherwise a rejected answer can be repeated
@@ -911,7 +1062,7 @@ def make_copilot(
             while request["rules"] and counter.count(request, RULES_SYSTEM) > budget:
                 request["rules"] = request["rules"][:-1]
             request["numeric_sources"] = numeric_sources(
-                request["recent_dialogue"], request["accepted_state"], request["rules"]
+                request["recent_dialogue"], request["working_state"], request["rules"]
             )
             trace["rules"]["request"] = request
             trace["rules"]["prompt_tokens"] = counter.count(request, RULES_SYSTEM)
@@ -944,13 +1095,8 @@ def make_copilot(
                     calculation=calculated,
                     model=metrics,
                 )
-                text = output.answer
-                if calculated:
-                    text += "\nCalculated result: " + packed(calculated)
-                if output.missing_information:
-                    text += "\nMissing information: " + "; ".join(
-                        output.missing_information
-                    )
+                text = display_advice(output, calculated)
+                trace["rules"]["display_text"] = text
                 suggestions.append(
                     _proposal(
                         "rule",
@@ -1017,7 +1163,24 @@ def make_copilot(
                 else {"suggestions": suggestions[:20], "trace": trace}
             )
         narrator_body = context["body"]
-        extra_documents = []
+        extra_documents = list(classification_gaps)
+        if policy == "agent" and decision["trace"].get("steps"):
+            last_decision = decision["trace"]["steps"][-1].get("decision", {})
+            if last_decision.get("action") == "respond":
+                extra_documents.append(
+                    {
+                        "id": "response-plan",
+                        "title": "Response plan (not source evidence)",
+                        "visibility": "private",
+                        "pinned": True,
+                        "text": packed(
+                            {
+                                "focus": last_decision.get("reason", ""),
+                                "instruction": "Use this plan to focus the reply, while verifying its premises against the sources. It records no new world facts or player decisions.",
+                            }
+                        ),
+                    }
+                )
         if decision["observations"] or decision["trace"]["status"] not in {
             "ready",
             "workflow",
@@ -1046,7 +1209,10 @@ def make_copilot(
                     "pinned": True,
                     "text": packed(
                         {
-                            "advice": trace["rules"]["advice"],
+                            "advice": {
+                                **trace["rules"]["advice"],
+                                "answer": trace["rules"]["display_text"],
+                            },
                             "deterministic_calculation": trace["rules"]["calculation"],
                             "changes_applied": False,
                         }
@@ -1100,16 +1266,31 @@ def make_copilot(
                 max_tokens=min(1400, context["output_reserve"]),
                 temperature=0.7,
             )
+            if quality_review:
+                from .response_review import review_response
+
+                output, review_trace = review_response(
+                    narrator_body, output, model_factory("auditor"), options()
+                )
+                trace["response_review"] = review_trace
+                if not still_usable(context):
+                    return stale()
             trace["storyteller"] = {
                 "status": "complete",
                 "model": metrics,
                 "answer": output.model_dump(),
                 "messages": messages,
             }
+            supported_checks, rejected_checks = validate_checks(
+                output.requested_checks, narrator_body.get("rules", [])
+            )
+            trace["storyteller"]["rejected_checks"] = rejected_checks
+            if rejected_checks:
+                trace["storyteller"]["status"] = "partial"
             for kind, title, text in (
                 ("narration", "Suggested Facilitator response", output.narration),
-                ("question", "Questions for the players", "\n".join(output.questions)),
-                ("action", "Suggested checks", "\n".join(output.requested_checks)),
+                ("question", "Open questions", "\n".join(output.questions)),
+                ("action", "Suggested checks", "\n".join(supported_checks)),
                 ("note", "Private Facilitator notes", output.private_notes),
             ):
                 if text.strip():
@@ -1134,7 +1315,9 @@ def make_copilot(
         if not still_usable(context):
             return stale()
         trace["seconds"] = round(time.perf_counter() - started, 6)
-        trace["partial"] = any(
+        trace["partial"] = trace.get("response_review", {}).get(
+            "status"
+        ) == "not_reviewed" or any(
             trace[task].get("status") in {"failed", "partial"}
             for task in ("classification", "rules", "storyteller")
         )

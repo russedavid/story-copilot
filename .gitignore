@@ -41,3 +41,6 @@ checkpoints/
 .session-secret
 *.session-secret
 .sesskey
+
+model-settings.json
+workspace.json

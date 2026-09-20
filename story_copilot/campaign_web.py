@@ -993,6 +993,31 @@ def register_campaign_routes(
                 else None,
                 decision_card(run),
                 Details(
+                    Summary("Response editing pass"),
+                    P(
+                        run["result"]
+                        .get("trace", {})
+                        .get("response_review", {})
+                        .get("status", "not run")
+                        .replace("_", " ")
+                    ),
+                    P(
+                        "This is a model editing pass, not an independent quality judgment."
+                    ),
+                    *[
+                        Div(
+                            Strong(issue["kind"].replace("_", " ")),
+                            P(issue["quote"]),
+                            P(issue["reason"]),
+                        )
+                        for issue in run["result"]
+                        .get("trace", {})
+                        .get("response_review", {})
+                        .get("review", {})
+                        .get("issues", [])
+                    ],
+                ),
+                Details(
                     Summary("Context sent to model"),
                     Pre(json.dumps(run["request"], ensure_ascii=False, indent=2)),
                 ),
@@ -1127,6 +1152,27 @@ def register_campaign_routes(
         )
         return Div(
             H2("Facilitator suggestions"),
+            P(
+                "The response editing pass could not complete; check this draft against the current conversation. Details are in the trace.",
+                cls="notice",
+            )
+            if runs
+            and runs[0]["result"]
+            .get("trace", {})
+            .get("response_review", {})
+            .get("status")
+            == "not_reviewed"
+            else None,
+            P(
+                "A suggested check was withheld because its rule citation could not be verified. See the generation trace.",
+                cls="notice",
+            )
+            if runs
+            and runs[0]["result"]
+            .get("trace", {})
+            .get("storyteller", {})
+            .get("rejected_checks")
+            else None,
             historical_drafts(session_id, runs),
             P(
                 "Rules advice could not be verified for this turn. Check the applicable rule and any required roll before resolving the action. The generation trace records the issue.",

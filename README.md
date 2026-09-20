@@ -2,7 +2,7 @@
 
 A private assistant for running an interactive story. It follows the conversation, keeps track of what changed, and helps the human facilitator decide what to say next.
 
-Players still choose their actions. The facilitator still runs the game. The copilot can recall a previous exchange, inspect a character's knowledge, consult rules you provide, or ask for a missing detail before suggesting a response. Its suggestions never become part of the conversation or the world state just because they were generated.
+Players still choose their actions. The facilitator still runs the game. The copilot can recall a previous exchange, inspect a character's knowledge, consult rules you provide, or ask for a missing detail before suggesting a response. Its suggestions never become part of the conversation or the world state just because they were generated. A bounded editing pass checks the draft for player agency, knowledge, and continuity problems, retaining the original for review.
 
 ## Start locally
 
@@ -26,12 +26,12 @@ For a local llama.cpp server, use an alias matching the model identifier in sett
 ## Try a conversation
 
 1. Choose **Try an example** to open *The Unsent Signal*, an original fictional scenario with two characters. This is authored sample content, not a transcript or a benchmark answer.
-2. Select **Request suggestion**. Open the generation trace to see the evidence decisions, retrieved sources, validation results, model output, and timing.
+2. Select **Suggest now**. Open the generation trace to see the evidence decisions, retrieved sources, validation results, model output, and timing.
 3. Add a player contribution or the facilitator's actual reply to the conversation. Suggested prose stays private; copy it if useful, or reject and refresh it for another possibility.
 4. Correct a source message when someone changes or clarifies what they said. The affected observations are rebuilt and incompatible in-flight answers are discarded.
 5. Use **Continue** for the next session, **Branch** to explore an alternative, or **Fresh** for a new story with the same campaign material.
 
-For your own campaign, add a direction, scenario documents, character sheets, and speaker mappings. Mark rule documents as **Rules for this campaign**. Character sheets accept your own JSON fields; numerical resource totals belong under `resources`, with `null` for unknown totals. A campaign can define terminology aliases and bounded arithmetic tools, without requiring a particular game system.
+For your own campaign, add a direction, scenario documents, character sheets, and speaker mappings. Mark rule documents as **Rules for this campaign**. Character sheets accept your own JSON fields; integer resource totals belong under `resources`, with `null` for unknown totals. A campaign can define terminology aliases and bounded arithmetic tools, without requiring a particular game system.
 
 Automatic guidance is optional. Starting the app or opening the example does not capture audio or send model requests. Enable automatic suggestions when ready; unchanged context does not repeatedly generate the same response.
 

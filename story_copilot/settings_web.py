@@ -10,7 +10,7 @@ from .settings import load, save
 
 
 def register(app, store, page, csrf, validate):
-    @app.route("/settings")
+    @app.route("/settings", methods=["GET"])
     def model_settings(session):
         settings = load(store.home)
         return page(

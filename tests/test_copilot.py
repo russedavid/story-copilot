@@ -10,7 +10,7 @@ from story_copilot.copilot import make_copilot as _make_copilot
 
 def make_copilot(*args, **kwargs):
     # Retain regression coverage of the original deterministic workflow.
-    return _make_copilot(*args, policy="workflow", **kwargs)
+    return _make_copilot(*args, policy="workflow", quality_review=False, **kwargs)
 
 
 from story_copilot.rule_advice import RulesAnswer, RuleSearchPlan
