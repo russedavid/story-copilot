@@ -36,6 +36,9 @@ An action must be hypothetical, declared, requested or reported, not established
 Routine conversation questions are not pending tasks. 'Maybe someone will let us siphon fuel' is hypothetical, not completed.
 'I draw my revolver' can establish a held object, not firing it. 'I asked for a full tank' is a past claim, not present fuel.
 Do not equate SPEAKER_XX with a character. Use a character name only when supported; otherwise record the identity uncertainty.
+Turns marked generated_player are AI participant utterances. For those sources, propose only pending actions
+or reported claims, not established effects, resources, knowledge, or resolutions. Only an independent facilitator
+confirmation can establish an outcome; cite that confirmation rather than the AI turn for an established event.
 These are unreviewed proposals. No invented certainty and no prose outside JSON."""
 
 
@@ -108,6 +111,17 @@ class LocalModel:
                 )
                 inventory_response.raise_for_status()
                 inventory = inventory_response.json()
+                if isinstance(inventory, list):
+                    for loaded, expected in zip(
+                        inventory, self.configuration["routing"]["adapters"]
+                    ):
+                        if (
+                            expected.get("path")
+                            and loaded.get("path") != expected["path"]
+                        ):
+                            raise ValueError(
+                                "The server loaded a different adapter file than the configured inventory."
+                            )
                 if not isinstance(inventory, list) or [
                     a.get("id") for a in inventory
                 ] != [a["id"] for a in lora]:

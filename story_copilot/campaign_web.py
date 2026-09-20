@@ -284,6 +284,19 @@ def register_campaign_routes(
             name="visibility",
         )
 
+    def audience_select(campaign_id, current="table"):
+        return Select(
+            *options(
+                [("table", "All players"), ("facilitator", "Facilitator only")]
+                + [
+                    (c["id"], c["name"] + " only")
+                    for c in campaigns.characters(campaign_id)
+                ],
+                current,
+            ),
+            name="recipient",
+        )
+
     def post_form(session, action, *content, **kwargs):
         # Associate visible labels with controls, including repeated sheet forms.
         for index, item in enumerate(content[:-1]):
@@ -414,7 +427,7 @@ def register_campaign_routes(
             Label("Character sheet (JSON)"),
             Textarea(json.dumps(char["sheet"], indent=2), name="sheet", rows=12),
             Small(
-                "Keep numerical totals under resources; use null when a total is unknown. Skills, inventory, background, and other fields are yours to define."
+                "This is the starting sheet. Record changes during play in the conversation; editing this sheet changes the baseline. Use integer resource totals, or null when unknown. Other fields are yours to define."
             ),
             P(Button("Save character")),
         )
@@ -1274,7 +1287,12 @@ def register_campaign_routes(
                     cls="muted",
                 ),
                 Div(
-                    Div(suggestion_panel(session_id, session)),
+                    Div(
+                        suggestion_panel(session_id, session),
+                        app.state.player_panel(session_id, session)
+                        if hasattr(app.state, "player_panel")
+                        else None,
+                    ),
                     Div(
                         Article(
                             H2("At the table"),
@@ -1304,8 +1322,11 @@ def register_campaign_routes(
                                     ),
                                     name="role",
                                 ),
-                                Label("Visibility"),
-                                visibility_select("public"),
+                                Label("Who hears this contribution?"),
+                                audience_select(s["campaign_id"]),
+                                Small(
+                                    "Use a character-only message for a whisper or private clue."
+                                ),
                                 Label("What was said or done?", fr="message"),
                                 Textarea(
                                     name="text", id="message", rows=4, required=True
@@ -1377,7 +1398,12 @@ def register_campaign_routes(
         return Article(
             Div(
                 Strong(
-                    f"{message.get('order_index', message['ordinal'])} · {message['speaker']}"
+                    f"{message.get('order_index', message['ordinal'])} · "
+                    + (
+                        message.get("source", {}).get("player_name", "Player") + " (AI)"
+                        if message.get("source", {}).get("kind") == "player_agent"
+                        else message["speaker"]
+                    )
                 ),
                 Small(f"Source #{message['ordinal']}"),
                 Span(message["role"], cls="badge"),
@@ -1580,8 +1606,16 @@ def register_campaign_routes(
                     Textarea(
                         messages[index]["text"], name="text", rows=5, required=True
                     ),
-                    Label("Visibility"),
-                    visibility_select(messages[index]["visibility"]),
+                    Label("Who hears this contribution?"),
+                    audience_select(
+                        campaigns.session(session_id)["campaign_id"],
+                        messages[index].get("recipient")
+                        or (
+                            "table"
+                            if messages[index]["visibility"] == "public"
+                            else "facilitator"
+                        ),
+                    ),
                     Label("Correction note"),
                     Input(name="note"),
                     P(Button("Save correction")),
@@ -1607,6 +1641,7 @@ def register_campaign_routes(
         character: str = "",
         visibility: str = "private",
         note: str = "",
+        recipient: str = "",
         csrf_token: str = "",
     ):
         try:
@@ -1621,6 +1656,7 @@ def register_campaign_routes(
                 visibility=visibility,
                 expected_revision=revision,
                 note=note,
+                recipient=recipient or None,
             )
             schedule(session_id)
             return redirect(f"/play/{session_id}/message/{message_id}")
@@ -1694,6 +1730,7 @@ def register_campaign_routes(
         text: str,
         role: str = "unknown",
         visibility: str = "public",
+        recipient: str = "",
         csrf_token: str = "",
     ):
         try:
@@ -1704,6 +1741,7 @@ def register_campaign_routes(
                 text,
                 role=role,
                 visibility=visibility,
+                recipient=recipient or None,
                 source={"kind": "manual", "review": "user supplied"},
             )
             schedule(session_id)

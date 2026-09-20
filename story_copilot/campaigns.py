@@ -37,7 +37,7 @@ def required(text, label="Text", limit=MAX_TEXT):
 
 def check_visibility(value):
     if value not in VISIBILITIES:
-        raise ValueError("Visibility must be public or story_copilot.")
+        raise ValueError("Visibility must be public or private.")
     return value
 
 
@@ -319,6 +319,9 @@ class Campaigns:
                 ordinal INTEGER NOT NULL,speaker TEXT NOT NULL,role TEXT NOT NULL,character TEXT NOT NULL,
                 text TEXT NOT NULL,visibility TEXT NOT NULL,source TEXT NOT NULL,external_id TEXT,
                 created TEXT NOT NULL,UNIQUE(session_id,ordinal),UNIQUE(session_id,external_id));
+            CREATE TABLE IF NOT EXISTS play_message_recipients (
+                message_id TEXT PRIMARY KEY REFERENCES play_messages(id),
+                recipient TEXT NOT NULL,revision_id TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS play_message_revisions (
                 id TEXT PRIMARY KEY,message_id TEXT NOT NULL REFERENCES play_messages(id),
                 speaker TEXT NOT NULL,role TEXT NOT NULL,character TEXT NOT NULL,
@@ -691,6 +694,17 @@ class Campaigns:
                 (bool(enabled), session_id),
             )
 
+    def _recipient_visibility(self, campaign_id, recipient, visibility):
+        if recipient is None:
+            return visibility
+        if recipient not in {"table", "facilitator"} and not any(
+            c["id"] == recipient for c in self.characters(campaign_id)
+        ):
+            raise ValueError(
+                "Choose the table, the facilitator, or a character from this campaign."
+            )
+        return "public" if recipient == "table" else "private"
+
     def add_message(
         self,
         session_id,
@@ -701,8 +715,19 @@ class Campaigns:
         visibility="public",
         source=None,
         external_id=None,
+        recipient=None,
     ):
         session = self.session(session_id)
+        recipient = (
+            recipient if recipient is not None else (source or {}).get("recipient")
+        )
+        visibility = self._recipient_visibility(
+            session["campaign_id"], recipient, visibility
+        )
+        source = {
+            **(source or {}),
+            **({"recipient": recipient} if recipient is not None else {}),
+        }
         check_visibility(visibility)
         if role not in ROLES:
             raise ValueError("Invalid speaker role.")
@@ -793,6 +818,17 @@ class Campaigns:
                     for key in ("speaker", "role", "character", "text", "visibility"):
                         message[key] = latest[key]
                     message["revision"] = latest["id"]
+                delivery = db.execute(
+                    "SELECT recipient FROM play_message_recipients WHERE message_id=?",
+                    (message["id"],),
+                ).fetchone()
+                recipient = (
+                    delivery["recipient"]
+                    if delivery
+                    else message["source"].get("recipient")
+                )
+                if recipient is not None:
+                    message["recipient"] = recipient
                 if not public_only or message["visibility"] == "public":
                     if public_only:
                         message.pop("original", None)
@@ -823,10 +859,23 @@ class Campaigns:
         visibility="private",
         expected_revision=None,
         note="",
+        recipient=None,
     ):
         original = self._one("play_messages", message_id)
         if original["session_id"] != session_id:
             raise ValueError("This message belongs to another session.")
+        current_message = next(
+            m for m in self.messages(session_id) if m["id"] == message_id
+        )
+        if recipient is None and "recipient" in current_message:
+            recipient = (
+                ("table" if visibility == "public" else "facilitator")
+                if visibility != current_message["visibility"]
+                else current_message["recipient"]
+            )
+        visibility = self._recipient_visibility(
+            self.session(session_id)["campaign_id"], recipient, visibility
+        )
         check_visibility(visibility)
         if role not in ROLES:
             raise ValueError("Invalid speaker role.")
@@ -854,6 +903,11 @@ class Campaigns:
                     now(),
                 ),
             )
+            if recipient is not None:
+                db.execute(
+                    "INSERT INTO play_message_recipients VALUES(?,?,?) ON CONFLICT(message_id) DO UPDATE SET recipient=excluded.recipient,revision_id=excluded.revision_id",
+                    (message_id, recipient, revision),
+                )
         return revision
 
     def proposals(self, session_id, public_only=False):
@@ -1229,6 +1283,8 @@ class Campaigns:
         mapping = {}
         for message in self.messages(session_id):
             branch_source = dict(message["source"])
+            if "recipient" in message:
+                branch_source["recipient"] = message["recipient"]
             if processed.get(message["id"]) == message["revision"]:
                 branch_source["inherited_analysis"] = {
                     "content_hash": digest(

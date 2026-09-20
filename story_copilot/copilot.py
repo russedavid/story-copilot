@@ -77,7 +77,7 @@ _MECHANICS = re.compile(
 
 
 def _message_view(message):
-    return {
+    view = {
         key: message[key]
         for key in (
             "id",
@@ -94,6 +94,12 @@ def _message_view(message):
         )
         if key in message
     }
+
+    if message.get("source", {}).get("kind") == "player_agent":
+        view["generated_player"] = True
+    if message.get("recipient"):
+        view["recipient"] = message["recipient"]
+    return view
 
 
 def _effective_role(message):
@@ -226,6 +232,13 @@ def _validate_event(candidate, selected, state, profile=None):
             }
         )
     cited = [lookup[e.turn] for e in event.evidence]
+    if any(m.get("generated_player") for m in cited) and event.kind not in {
+        "action",
+        "claim",
+    }:
+        raise ValueError(
+            "An AI player's utterance establishes a choice or claim, not a world outcome. Cite the facilitator's confirmation for an established effect."
+        )
     if (
         event.kind in {"action", "resource", "knowledge", "claim"}
         and all(m["role"] == "unknown" for m in cited)

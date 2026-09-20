@@ -35,6 +35,10 @@ For your own campaign, add a direction, scenario documents, character sheets, an
 
 Automatic guidance is optional. Starting the app or opening the example does not capture audio or send model requests. Enable automatic suggestions when ready; unchanged context does not repeatedly generate the same response.
 
+## Add player agents
+
+Create a player identity, assign it a character, and request one turn when it should speak. Each identity can select its own loaded LoRA while sharing a common base model. Its evidence tools can access only its permitted conversation, its own sheet, and shared material. Character-only messages support private clues. [Player-agent setup and boundaries](docs/player-agents.md) explain the controls and training connection.
+
 ## Conversation, audio, and privacy
 
 Type or paste contributions directly, import your own transcripts into the source library, or use the optional local audio pipeline. Microphone and system audio remain separate sources, and speaker identity can be corrected. [Audio setup](docs/audio.md) describes the additional dependencies and worker process.

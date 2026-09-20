@@ -110,6 +110,11 @@ def create_app(store=None):
                     style="font-size:.9rem;margin-left:24px",
                 ),
                 A(
+                    "Player agents",
+                    href="/players",
+                    style="font-size:.9rem;margin-left:24px",
+                ),
+                A(
                     "Model settings",
                     href="/settings",
                     style="font-size:.9rem;margin-left:24px",
@@ -1084,5 +1089,16 @@ def create_app(store=None):
         workers=workers,
         generate=generate_play,
         build_context=build_play_context,
+    )
+    from .player_web import register as register_players
+
+    register_players(
+        app,
+        store,
+        page=page,
+        csrf=csrf,
+        validate=validate,
+        workers=workers,
+        schedule=app.state.campaign_scheduler.schedule,
     )
     return app

@@ -15,6 +15,9 @@ def wire_schema(model):
         "NarrationAnswer",
         "DirectAnswer",
         "ResponseReview",
+        "PlayerReply",
+        "ScopedPlayerReply",
+        "PlayerDecision",
     }
 
     def visit(value):
