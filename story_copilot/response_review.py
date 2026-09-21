@@ -53,6 +53,8 @@ SYSTEM += """
 A private creative draft may propose consistent new NPC dialogue and small world details. Those proposals
 need not be previous transcript quotations. Preserve useful invention unless it contradicts the source,
 takes a player's turn, reveals protected knowledge, or falsely resolves an uncertain outcome.
+An explicit unknown is a continuity constraint. Do not turn 'nobody knows whether someone accompanied him'
+into 'he was definitely alone' unless the facilitator asked to establish that fact.
 Use usability only for a concrete problem: the draft repeats the prompt instead of responding, offers a generic
 menu instead of the requested NPC reply, or buries the usable response under redundant commentary.
 Do not rewrite merely to impose your preferred style or remove harmless fictional colour.

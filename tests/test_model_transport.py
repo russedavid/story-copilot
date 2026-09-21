@@ -112,6 +112,18 @@ def test_ui_model_settings_post_persists_changes(tmp_path):
         )
         assert response.status_code == 200
         assert load(store.home)["model"] == "saved-choice"
+        enabled = client.post("/settings", data={
+            "csrf_token": csrf, "backend": "llama.cpp", "url": "http://localhost:8091/v1",
+            "model": "saved-choice", "context_limit": "16384", "output_reserve": "1800",
+            "routing": '{"adapters":[],"tasks":{}}', "planner_enabled": "on",
+            "planner_url": "http://localhost:8093/v1", "planner_model": "learned-policy",
+            "planner_context": "8192", "planner_backend": "llama.cpp",
+            "planner_routing": '{"adapters":[{"id":0}],"tasks":{"planner":0}}',
+        }, headers={"origin": "null", "sec-fetch-site": "same-origin"})
+        assert enabled.status_code == 200
+        assert load(store.home)["planner"]["routing"]["tasks"]["planner"] == 0
+        assert 'learned-policy' in client.get("/settings").text
+
 
 
 def test_generation_defaults_are_applied_by_event_kind_before_application_validation(
@@ -137,3 +149,17 @@ def test_generation_defaults_are_applied_by_event_kind_before_application_valida
     assert result.events[0].stage == "declared"
     assert Event.model_validate(result.events[0].model_dump()).stage == "declared"
     assert metrics["generation_contract"] == "valid"
+
+
+def test_learned_policy_preserves_free_key_order_but_still_validates_schema(monkeypatch):
+    from story_copilot.rl_environment import EvidenceDecision
+    original_client = httpx.Client
+    requests = mock_server(monkeypatch, [], content='{"action":"respond","value":2,"sources":["current-note"]}')
+    answer, metrics = LocalModel(task="planner", configuration=validate({})).complete(
+        [], EvidenceDecision, constrain=False)
+    assert json.loads(requests[-1].content)["response_format"] == {"type":"json_object"}
+    assert answer.sources == ["current-note"] and metrics["response_format"] == "json_object"
+    monkeypatch.setattr(httpx, "Client", original_client)
+    mock_server(monkeypatch, [], content='{"action":"delete","value":2}')
+    with pytest.raises(ValueError):
+        LocalModel(task="planner", configuration=validate({})).complete([], EvidenceDecision, constrain=False)

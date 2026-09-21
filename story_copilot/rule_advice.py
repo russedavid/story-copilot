@@ -111,8 +111,8 @@ def display_advice(answer, calculated):
         if calculated["operation"] == "spend":
             value = calculated["result"]
             return (
-                ("The action is affordable." if value["allowed"] else "The action is not affordable; nothing is spent.")
-                + f" Remaining balance: {value['remaining']}."
+                (f"The action is affordable. If activated, the remaining balance would be {value['remaining']}."
+                 if value["allowed"] else f"The action is not affordable; nothing is spent. Remaining balance: {value['remaining']}.")
                 + f"\nVerified inputs: available {calculated['inputs'][0]}, required {calculated['inputs'][1]}."
             )
         symbols = {

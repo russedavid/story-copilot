@@ -56,3 +56,43 @@ def test_dedicated_settings_validate_inventory_without_changing_default_or_audit
         validate({"routing":{"adapters":[{"id":0}],"tasks":{"auditor":0}}})
     with pytest.raises(ValueError,match="nested"):
         validate({"planner":{"planner":{}}})
+
+
+def test_latest_facilitator_update_and_complete_audio_question_replace_older_trigger():
+    from story_copilot.copilot import _trigger, _message_view
+    messages = [dict(id="1", ordinal=1, speaker="P", role="player", text="How many charges?", visibility="public"),
+                dict(id="2", ordinal=2, speaker="F", role="facilitator", text="Privately, you notice a scratch.", visibility="private")]
+    assert _trigger(messages) == "F (facilitator): Privately, you notice a scratch."
+    messages += [dict(id="3", ordinal=3, speaker="P", role="player", text="Can I afford it?", visibility="public", source={"chunk_id":"audio"}),
+                 dict(id="4", ordinal=4, speaker="P", role="player", text="I have not activated it.", visibility="public", source={"chunk_id":"audio"})]
+    assert _trigger([_message_view(m) for m in messages]) == "P (player): Can I afford it? I have not activated it."
+    assert "scratch" not in _trigger(messages)
+
+
+def test_context_uses_current_resources_without_mutating_starting_sheet():
+    from story_copilot.context import pack_context
+    state = {"entities":{"Neri":{"sheet":{"value":{"occupation":"mechanic","resources":{"cells":9}},"visibility":"public"}}},
+             "resources":{"Neri:cells":{"value":2,"visibility":"public"}}}
+    result = pack_context(turns=[], state=state, player_input="How many cells?", active_entities=["Neri"])
+    assert "resources" not in result["body"]["state"]["entities"]["Neri"]["sheet"]["value"]
+    assert result["body"]["state"]["resources"]["Neri:cells"]["value"] == 2
+    assert state["entities"]["Neri"]["sheet"]["value"]["resources"]["cells"] == 9
+
+
+def test_untrained_fiction_scope_uses_the_main_planner_without_a_small_model_call():
+    class Unexpected:
+        def complete(self, *args, **kwargs):
+            raise AssertionError("Narrative task must retain the main planner")
+    messages=brief();body=json.loads(messages[-1]["content"]);body["current_task"]="I ask the caretaker about her missing colleague.";messages[-1]["content"]=json.dumps(body)
+    fallback=Fallback();_,trace=LivePlanner(Unexpected(),fallback).complete(messages,Decision)
+    assert trace["planner_route"]=="shared_scope" and fallback.calls==1
+
+
+def test_original_learned_contract_infers_intent_without_losing_terminal_sources():
+    class Model:
+        def complete(self,*args,**kwargs):
+            assert kwargs["constrain"] is False
+            return LiveDecision(action="respond",value=2,sources=["message"]), {}
+    result,trace=LivePlanner(Model(),Fallback(),options={"token_counter":lambda _:1}).complete(brief(),Decision)
+    assert result.intent=="state" and trace["intent_from_evidence_fields"]
+    assert trace["terminal_proposal_not_applied"]["sources"]==["message"]

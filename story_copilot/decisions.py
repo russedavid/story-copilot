@@ -9,7 +9,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from .context import _Counter
-from .rules import search_rules, rule_query_terms
+from .rules import search_rules, rule_query_terms, active_documents
 from .store import packed
 
 
@@ -165,7 +165,7 @@ def seek_evidence(
         "tool_results": observations,
         "rules_available": [
             {"id": d["id"], "title": d["title"]}
-            for d in snapshot["documents"]
+            for d in active_documents(snapshot)
             if is_rule(d)
         ],
     }

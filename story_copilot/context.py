@@ -374,6 +374,16 @@ def pack_context(
         if not public_only or t.get("visibility") == "public"
     ]
     state = _visible(state) if public_only else deepcopy(state)
+    full_state_hash = digest(packed(state))
+    # Starting-sheet resource totals are historical. Showing them beside the
+    # current resource ledger caused both narration and editing to restore old
+    # balances. Preserve the sheet in storage and explicit character retrieval,
+    # but give every packed model context one place for current totals.
+    for attributes in state.get("entities", {}).values():
+        sheet = attributes.get("sheet", {})
+        value = sheet.get("value") if isinstance(sheet, dict) else None
+        if isinstance(value, dict) and "resources" in value:
+            value.pop("resources")
     rules = [
         deepcopy(r) for r in rules if not public_only or r.get("visibility") == "public"
     ]
@@ -485,7 +495,7 @@ def pack_context(
     ) + deepcopy(state.get("hypotheses", []))
     full_count = counter.count(complete, system_prompt)
     trace["uncompacted_prompt_tokens"] = full_count
-    trace["full_state_sha256"] = digest(packed(state))
+    trace["full_state_sha256"] = full_state_hash
     if full_count <= available * compact_at:
         body = complete
     else:

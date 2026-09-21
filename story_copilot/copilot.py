@@ -100,6 +100,8 @@ def _message_view(message):
 
     if message.get("source", {}).get("kind") == "player_agent":
         view["generated_player"] = True
+    if message.get("source", {}).get("chunk_id"):
+        view["audio_chunk"] = message["source"]["chunk_id"]
     if message.get("recipient"):
         view["recipient"] = message["recipient"]
     return view
@@ -114,28 +116,28 @@ def _effective_role(message):
 
 
 def _trigger(messages, *, partial_order=False):
-    last = next(
-        (
-            i
-            for i in range(len(messages) - 1, -1, -1)
-            if _effective_role(messages[i]) in {"player", "unknown"}
-        ),
-        None,
-    )
-    if last is None:
+    if not messages:
         return ""
     if partial_order:
-        message = max(
-            (m for m in messages if _effective_role(m) in {"player", "unknown"}),
-            key=lambda m: m["ordinal"],
-        )
+        message = max(messages, key=lambda m: m["ordinal"])
         prefix = "Latest received contribution (event order uncertain): "
     else:
-        message = messages[last]
+        message = messages[-1]
         prefix = ""
+    text = message["text"]
+    # ASR can split one utterance into sentence-sized messages. Retain that
+    # bounded utterance so a trailing qualification doesn't replace its question.
+    chunk_id = lambda m: m.get("audio_chunk") or m.get("source", {}).get("chunk_id")
+    chunk = chunk_id(message)
+    if chunk:
+        siblings = [m for m in messages if chunk_id(m) == chunk
+                    and m["speaker"] == message["speaker"] and m["visibility"] == message["visibility"]]
+        combined = " ".join(m["text"] for m in siblings)
+        if len(combined) <= 1200:
+            text = combined
     # Earlier contributions remain in recent dialogue/retrieval. Do not duplicate
     # an unbounded uninterrupted player monologue in a mandatory input field.
-    return prefix + f"{message['speaker']} ({message['role']}): {message['text']}"
+    return prefix + f"{message['speaker']} ({message['role']}): {text}"
 
 
 def _proposal(kind, title, text, *, payload=None, evidence=()):
@@ -1016,6 +1018,16 @@ def make_copilot(
             else "narrative"
         )
         trace["response_intent"] = intent
+        # The learned policy chooses lookups, but cannot bypass arithmetic
+        # verification by labelling an explicit numerical ruling as plain state.
+        numerical_question = bool(re.search(
+            r"\b(?:afford|calculate|what (?:is|would be) the cost|how (?:many|much).{0,80}(?:after|spend|spent|using))\b",
+            context["body"]["new_player_input"], re.I,
+        ))
+        if numerical_question:
+            intent = "rules"
+            trace["response_intent"] = intent
+            trace["numerical_verification_required"] = True
         wants_rules = any(o.get("tool") == "rules" for o in decision["observations"])
         if (
             context.get("narration_needed", True)

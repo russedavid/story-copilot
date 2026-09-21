@@ -61,7 +61,8 @@ class LocalModel:
         self.task = task
 
     def complete(
-        self, messages, schema, max_tokens=2500, temperature=None, timeout=300
+        self, messages, schema, max_tokens=2500, temperature=None, timeout=300,
+        constrain=True,
     ):
         from .routing import selection
         from .wire_schema import wire_schema, WIRE_SCHEMA_VERSION
@@ -87,6 +88,12 @@ class LocalModel:
                 },
             },
         }
+        if not constrain:
+            # Learned policies may have been trained with a different key order.
+            # A property-ordered grammar can prevent a valid trailing citation
+            # after `value`. Keep JSON syntax constrained and validate the full
+            # decision with Pydantic after generation, without ordering its keys.
+            payload["response_format"] = {"type": "json_object"}
         if self.configuration["backend"] == "chat-completions":
             for key in [
                 "lora",
@@ -141,6 +148,7 @@ class LocalModel:
             "task": self.task,
             "adapter_id": adapter_id,
             "wire_schema_version": WIRE_SCHEMA_VERSION,
+            "response_format": payload["response_format"]["type"],
             "seconds": round(time.monotonic() - started, 3),
             "model": raw.get("model", self.name),
             "endpoint": self.url,

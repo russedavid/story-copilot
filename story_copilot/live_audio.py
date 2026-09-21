@@ -658,6 +658,13 @@ def audio_timeline(source, start, end, *, session, channel):
             quality="recording-relative aligned speech",
             uncertainty="No calendar/playback UTC anchor; ordering against manual messages is unknown.",
         )
+    elif source.get("kind") == "scheduled_replay" and source.get("manifest_sha256"):
+        result.update(
+            domain="schedule:" + source["manifest_sha256"],
+            kind="recording",
+            quality="explicit source schedule; aligned recording-relative speech",
+            uncertainty="Operator-supplied relative schedule, not measured live capture or UTC.",
+        )
     elif isinstance(clock, dict) and clock.get("kind") == "live_capture":
         result.update(
             domain=clock.get("domain"),
