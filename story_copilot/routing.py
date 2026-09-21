@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 
 
-TASKS = {"classifier", "storyteller", "rules", "auditor", "player"}
+TASKS = {"classifier", "storyteller", "rules", "auditor", "player", "planner"}
 
 
 def selection(task, configuration=None):

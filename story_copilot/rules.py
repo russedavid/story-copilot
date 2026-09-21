@@ -143,10 +143,24 @@ def rule_query_terms(query, edition="custom"):
     return list(dict.fromkeys(words))
 
 
+def active_documents(snapshot):
+    """Keep prior documents in the snapshot audit while retrieving active editions."""
+    documents = snapshot.get("documents", [])
+    superseded = set()
+    for document in documents:
+        metadata = document.get("metadata") or {}
+        if isinstance(metadata, str):
+            metadata = json.loads(metadata)
+        previous = metadata.get("supersedes")
+        if isinstance(previous, str) and previous:
+            superseded.add(previous)
+    return [document for document in documents if document["id"] not in superseded]
+
+
 def campaign_rule_chunks(snapshot):
     """Chunks are bound to documents in this exact frozen campaign snapshot."""
     result = []
-    for document in snapshot.get("documents", []):
+    for document in active_documents(snapshot):
         metadata = document.get("metadata") or {}
         if isinstance(metadata, str):
             metadata = json.loads(metadata)

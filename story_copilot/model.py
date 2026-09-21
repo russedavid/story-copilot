@@ -54,6 +54,8 @@ class LocalModel:
         from .store import data_home
 
         self.configuration = configuration or load(data_home())
+        if task == "planner" and self.configuration.get("planner"):
+            self.configuration = self.configuration["planner"]
         self.url = (url or self.configuration["url"]).rstrip("/")
         self.name = model or self.configuration["model"]
         self.task = task
@@ -141,6 +143,7 @@ class LocalModel:
             "wire_schema_version": WIRE_SCHEMA_VERSION,
             "seconds": round(time.monotonic() - started, 3),
             "model": raw.get("model", self.name),
+            "endpoint": self.url,
             "usage": raw.get("usage", {}),
             "response": content,
             "finish_reason": choice.get("finish_reason"),
@@ -152,7 +155,7 @@ class LocalModel:
         }
         metrics["schema_sha256"] = digest(packed(output_schema))
         metadata_path = os.environ.get("STORY_MODEL_METADATA")
-        if metadata_path:
+        if metadata_path and self.task != "planner":
             from pathlib import Path
 
             metrics["model_provenance"] = json.loads(Path(metadata_path).read_text())

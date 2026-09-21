@@ -1,6 +1,8 @@
 """Rules advice grounded in supplied references and declared campaign tools."""
 
 from typing import Literal
+import re
+import time
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -8,6 +10,7 @@ from .mechanics import grounded_calculation, numeric_sources
 from .model import ModelResponseError, workspace_model
 from .rules import search_rules, rule_query_terms
 from .store import source_quote
+from .store import packed
 
 
 class RuleCitation(BaseModel):
@@ -26,6 +29,7 @@ class Calculation(BaseModel):
     model_config = ConfigDict(extra="forbid")
     tool: str = Field(min_length=1)
     inputs: list[NumericInput] = Field(min_length=1, max_length=12)
+    scope: Literal["current", "historical"] = "current"
 
 
 class RulesAnswer(BaseModel):
@@ -54,8 +58,18 @@ by ID and copy the exact supplied values. Do not silently roll dice, assume a di
 A tool calculation is advice, never an automatic change to the world or a character's resources.
 Return answer, citations, calculation (null when unnecessary), and missing_information."""
 
+RULES_SYSTEM += """
+For a numerical ruling, select a supplied calculation tool instead of doing mental arithmetic in answer.
+Use current_resource inputs for current balances. Inputs marked superseded cannot support a current ruling;
+do not select a negated earlier value merely because it occurs in a correction. scope=historical is only for
+an explicitly requested historical comparison, never current permission or spending.
+balance_after_cost computes both permission and the remaining balance, including the unaffordable case.
+Use it only when the cited rule requires enough resources and spends nothing otherwise.
+If no relevant source supports a required input, ask for it; zero is not an inferred default.
+"""
 
-def validate_advice(answer, sources, profile=None, numbers=()):
+
+def validate_advice(answer, sources, profile=None, numbers=(), *, question=""):
     lookup = {s["id"]: s for s in sources}
     numeric_lookup = {s["id"]: s for s in numbers}
     cited_rule = False
@@ -73,10 +87,17 @@ def validate_advice(answer, sources, profile=None, numbers=()):
             raise ValueError("Rules advice cited a source that was not supplied.")
     if answer.calculation is not None and answer.missing_information:
         raise ValueError("Resolve missing information before requesting a calculation.")
+    if answer.calculation is not None and answer.calculation.scope == "historical" and not re.search(
+        r"\b(?:historical|previous|old|formerly|before|change|difference|compare|comparison)\b", question, re.I
+    ):
+        raise ValueError("Historical inputs require an explicitly requested historical comparison.")
     if not cited_rule and not answer.missing_information:
         raise ValueError(
             "A rules assertion or calculation needs a supplied rule citation or an explicit information gap."
         )
+    if (not answer.missing_information and answer.calculation is None and len(numbers) >= 2
+            and re.search(r"\b(?:afford|calculate|subtract|deduct|difference|remaining|left after|how many.+(?:spend|using|use))\b", question, re.I)):
+        raise ValueError("This numerical question needs a grounded calculator result, not an unchecked answer.")
     return grounded_calculation(answer.calculation, profile or {"tools": []}, numbers)
 
 
@@ -87,6 +108,13 @@ def display_advice(answer, calculated):
             answer.missing_information
         )
     if calculated is not None:
+        if calculated["operation"] == "spend":
+            value = calculated["result"]
+            return (
+                ("The action is affordable." if value["allowed"] else "The action is not affordable; nothing is spent.")
+                + f" Remaining balance: {value['remaining']}."
+                + f"\nVerified inputs: available {calculated['inputs'][0]}, required {calculated['inputs'][1]}."
+            )
         symbols = {
             "sum": "+",
             "difference": "−",
@@ -103,7 +131,7 @@ def display_advice(answer, calculated):
         expression = (" " + symbols[calculated["operation"]] + " ").join(
             str(v) for v in calculated["inputs"]
         )
-        return (
+        return ("Historical comparison: " if calculated.get("scope") == "historical" else "") + (
             calculated["tool"].replace("_", " ").capitalize()
             + ": "
             + result
@@ -111,6 +139,42 @@ def display_advice(answer, calculated):
             + expression
         )
     return answer.answer
+
+
+def checked_advice(model, request, *, timeout=75):
+    """One repair attempt against unchanged evidence; failed drafts never become facts."""
+    messages = [{"role": "system", "content": RULES_SYSTEM},
+                {"role": "user", "content": packed(request)}]
+    attempts = []
+    started = time.monotonic()
+    for number in range(2):
+        remaining = timeout - (time.monotonic() - started)
+        if remaining <= 0:
+            break
+        try:
+            answer, metrics = model.complete(messages, RulesAnswer, max_tokens=900, temperature=0, timeout=remaining)
+            attempt = {"answer": answer.model_dump(), "model": metrics}
+            attempts.append(attempt)
+            calculated = validate_advice(answer, request["rules"], request["profile"],
+                                        request["numeric_sources"], question=request["question"])
+            attempt["status"] = "valid"
+            return answer, metrics, calculated, attempts
+        except Exception as exc:
+            if not attempts or attempts[-1].get("status") is not None:
+                attempts.append({"model": getattr(exc, "trace", {})})
+            attempts[-1].update(status="invalid", error=str(exc))
+            if number == 0:
+                rejected = attempts[-1].get("answer")
+                if rejected:
+                    messages.append({"role": "assistant", "content": packed(rejected)})
+                messages.append({"role": "user", "content": packed({**request,
+                    "validation_feedback": "The previous proposal was rejected: " + str(exc)
+                    + " Recheck the original supplied evidence and numeric-source IDs. Correct the proposal or identify the missing input. A rejected proposal is not evidence."})})
+    last = attempts[-1] if attempts else {}
+    raise ModelResponseError(
+        "Rules advice could not be verified after a bounded repair: " + last.get("error", "deadline expired"),
+        {"attempts": attempts, "raw_response": last.get("answer"), "model": last.get("model", {})},
+    )
 
 
 def retrieve_rules(store, question, planner=None, *, snapshot=None):

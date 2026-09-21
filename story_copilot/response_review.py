@@ -16,6 +16,7 @@ class Issue(BaseModel):
         "continuity",
         "unanswered_question",
         "unsupported_rule",
+        "usability",
     ]
     quote: str = Field(min_length=1, max_length=1200)
     reason: str = Field(min_length=1, max_length=600)
@@ -47,6 +48,15 @@ revision must be null. Otherwise provide ONE complete, minimally corrected respo
 material, remove invented player performance, answer the current question directly, and ask only about unresolved
 choices. Do not add unrelated scene developments while editing. requested_checks needs exact supplied rule citations.
 This is an editing pass, not a new conversation contribution or a change to world state."""
+
+SYSTEM += """
+A private creative draft may propose consistent new NPC dialogue and small world details. Those proposals
+need not be previous transcript quotations. Preserve useful invention unless it contradicts the source,
+takes a player's turn, reveals protected knowledge, or falsely resolves an uncertain outcome.
+Use usability only for a concrete problem: the draft repeats the prompt instead of responding, offers a generic
+menu instead of the requested NPC reply, or buries the usable response under redundant commentary.
+Do not rewrite merely to impose your preferred style or remove harmless fictional colour.
+"""
 
 
 def review_response(body, answer, model, options):

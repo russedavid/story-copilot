@@ -16,18 +16,20 @@ from .campaigns import Campaigns, snapshot_change
 from .context import _Counter, pack_context
 from .model import EXTRACT_SYSTEM, LocalModel
 from .decisions import seek_evidence
-from .mechanics import numeric_sources
+from .mechanics import numeric_sources, calculation_profile
 from .rule_advice import (
     RULES_SYSTEM,
     RulesAnswer,
     retrieve_rules,
     validate_advice,
     display_advice,
+    checked_advice,
 )
-from .rules import search_rules
+from .rules import search_rules, active_documents
 from .schema import DirectAnswer, Event, Extraction, NarrationAnswer
 from .store import digest, packed, source_quote
 from .training import STORY_SYSTEM
+from .writing import FACILITATOR_WRITING
 
 VERSION = 3
 
@@ -71,9 +73,10 @@ rule excerpt authorizing it. If no applicable rule ID/quotation is available, le
 Do not put summaries of past checks in requested_checks; a roll summary belongs in narration or private_notes."""
 )
 _MECHANICS = re.compile(
-    r"\b(?:roll(?:ed|s)?|dice|skill|rules?|difficulty|damage|cost|calculate)\b",
+    r"\b(?:roll(?:ed|s)?|dice|skill|rules?|difficulty|damage|cost|calculate|afford)\b",
     re.IGNORECASE,
 )
+COPILOT_SYSTEM += FACILITATOR_WRITING
 
 
 def _message_view(message):
@@ -569,7 +572,7 @@ def make_copilot(
             direction += "\nConversation timing: " + " ".join(chronology["notes"])
             direction += " These are source-observation times, not fictional game time. Never infer that a preceding displayed utterance prompted a reply across incompatible clocks."
         feedback = snapshot.get("feedback", [])
-        documents = deepcopy(snapshot.get("documents", [])) + deepcopy(
+        documents = deepcopy(active_documents(snapshot)) + deepcopy(
             list(extra_documents)
         )
         controls = {}
@@ -990,10 +993,16 @@ def make_copilot(
             "question": None,
         }
         if context.get("narration_needed", True) and policy == "agent":
+            planner = model_factory("auditor")
+            dedicated = context.get("model_configuration", {}).get("planner")
+            if dedicated:
+                from .live_planner import LivePlanner
+                planner = LivePlanner(model_factory("planner"), planner,
+                                      options=options(), context_limit=dedicated["context_limit"])
             decision = seek_evidence(
                 store,
                 context,
-                model_factory("auditor"),
+                planner,
                 options=options(),
                 still_usable=lambda: still_usable(context),
             )
@@ -1053,6 +1062,7 @@ def make_copilot(
                         key: message[key]
                         for key in (
                             "ordinal",
+                            "id",
                             "speaker",
                             "role",
                             "character",
@@ -1065,7 +1075,7 @@ def make_copilot(
                     for message in context["current_messages"]
                 ],
                 "working_state": context["body"]["state"],
-                "profile": context["frozen_snapshot"].get("rule_profile", {}),
+                "profile": calculation_profile(context["frozen_snapshot"].get("rule_profile", {})),
                 # Draft feedback guides writing, but is not source evidence for
                 # the rules expert. Otherwise a rejected answer can be repeated
                 # as though it were an observed fact or supplied scenario rule.
@@ -1098,7 +1108,9 @@ def make_copilot(
             while request["rules"] and counter.count(request, RULES_SYSTEM) > budget:
                 request["rules"] = request["rules"][:-1]
             request["numeric_sources"] = numeric_sources(
-                request["recent_dialogue"], request["working_state"], request["rules"]
+                request["recent_dialogue"], request["working_state"], request["rules"],
+                actors=[c["name"] for c in context["frozen_snapshot"]["characters"]
+                        if re.search(r"(?<!\w)" + re.escape(c["name"]) + r"(?!\w)", request["question"], re.I)] or None,
             )
             trace["rules"]["request"] = request
             trace["rules"]["prompt_tokens"] = counter.count(request, RULES_SYSTEM)
@@ -1108,23 +1120,10 @@ def make_copilot(
                     raise ValueError(
                         "Required rules context exceeds the configured model budget."
                     )
-                output, metrics = model_factory("rules").complete(
-                    [
-                        {"role": "system", "content": RULES_SYSTEM},
-                        {"role": "user", "content": packed(request)},
-                    ],
-                    RulesAnswer,
-                    max_tokens=900,
-                    temperature=0,
-                )
+                output, metrics, calculated, attempts = checked_advice(model_factory("rules"), request)
+                trace["rules"]["attempts"] = attempts
                 trace["rules"]["raw_response"] = output.model_dump()
                 trace["rules"]["model"] = metrics
-                calculated = validate_advice(
-                    output,
-                    request["rules"],
-                    request["profile"],
-                    request["numeric_sources"],
-                )
                 trace["rules"].update(
                     status="complete",
                     advice=output.model_dump(),
@@ -1153,11 +1152,20 @@ def make_copilot(
                     )
                 )
             except Exception as exc:  # noqa: BLE001 - keep useful prose when rules evidence fails
+                failure = getattr(exc, "trace", {})
+                if "attempts" in failure:
+                    trace["rules"].update(
+                        attempts=failure["attempts"],
+                        raw_response=failure.get("raw_response"),
+                    )
                 trace["rules"].update(
                     status="failed",
                     error=str(exc),
-                    model=getattr(exc, "trace", trace["rules"].get("model", {})),
+                    model=failure.get("model", failure or trace["rules"].get("model", {})),
                 )
+                if intent == "rules":
+                    decision["question"] = "The rule or its numerical inputs could not be verified. Please confirm the effective rule and current values before using this ruling."
+                    trace["rules"]["requires_clarification"] = True
         if not still_usable(context):
             return stale()
         classification["blocked_backlog"] = context.get("blocked_source_ids", [])
@@ -1318,6 +1326,14 @@ def make_copilot(
                 trace["response_review"] = review_trace
                 if not still_usable(context):
                     return stale()
+            if intent == "rules" and trace["rules"].get("calculation") is not None:
+                # Generation and editing can phrase a rule, but cannot replace
+                # the verified calculation with a different numerical result.
+                trace["verified_answer"] = {
+                    "generated": output.direct_answer,
+                    "authoritative": trace["rules"]["display_text"],
+                }
+                output.direct_answer = trace["rules"]["display_text"]
             trace["storyteller"] = {
                 "status": "complete",
                 "model": metrics,

@@ -12,7 +12,7 @@ from .context import pack_context, _Counter
 from .decisions import recall
 from .model import LocalModel
 from .player_contract import PLAYER_SYSTEM, PLAN_SYSTEM, PlayerDecision, reply_contract
-from .rules import search_rules
+from .rules import search_rules, active_documents
 from .settings import load as model_settings
 from .store import digest, now, packed
 
@@ -212,7 +212,7 @@ class Players:
                 k: d[k]
                 for k in ["id", "title", "text", "visibility", "sha256", "metadata"]
             }
-            for d in self.campaigns.documents(session["campaign_id"], public_only=True)
+            for d in active_documents({"documents": self.campaigns.documents(session["campaign_id"], public_only=True)})
         ]
         # A public document's filesystem/upload metadata is unnecessary to the model.
         for document in documents:

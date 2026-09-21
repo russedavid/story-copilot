@@ -466,8 +466,20 @@ class Campaigns:
         self.campaign(campaign_id)
         check_visibility(visibility)
         text = required(text, "Scenario or reference text")
+        metadata = dict(metadata or {})
         identifier = uuid4().hex
         with self.store.db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if metadata.get("supersedes"):
+                existing = [dict(row) for row in db.execute("SELECT * FROM play_documents WHERE campaign_id=?", (campaign_id,))]
+                previous = next((d for d in existing if d["id"] == metadata["supersedes"]), None)
+                if previous is None:
+                    raise ValueError("A replacement must name a document from this campaign.")
+                previous_metadata = json.loads(previous["metadata"])
+                if previous_metadata.get("kind", "reference") != metadata.get("kind", "reference"):
+                    raise ValueError("A replacement must keep the document's rule/reference kind.")
+                if any(json.loads(d["metadata"]).get("supersedes") == previous["id"] for d in existing):
+                    raise ValueError("That document was already replaced. Select its current replacement.")
             db.execute(
                 "INSERT INTO play_documents VALUES(?,?,?,?,?,?,?,?)",
                 (

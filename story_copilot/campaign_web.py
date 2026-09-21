@@ -439,6 +439,9 @@ def register_campaign_routes(
             sessions = campaigns.sessions(campaign_id)
             current = campaigns.current_session(campaign_id)
             chars = campaigns.characters(campaign_id)
+            from .rules import active_documents
+            documents = campaigns.documents(campaign_id)
+            active_ids = {d["id"] for d in active_documents({"documents": documents})}
             from .demo import DISCLOSURE, demo_info
 
             authored_demo = demo_info(campaigns, campaign_id)
@@ -540,7 +543,8 @@ def register_campaign_routes(
                             ),
                             *[
                                 Details(
-                                    Summary(d["title"], " · ", d["visibility"]),
+                                    Summary(d["title"], " · ", d["visibility"],
+                                            " · superseded" if d["id"] not in active_ids else ""),
                                     Pre(d["text"]),
                                     post_form(
                                         session,
@@ -551,7 +555,7 @@ def register_campaign_routes(
                                         ),
                                     ),
                                 )
-                                for d in campaigns.documents(campaign_id)
+                                for d in documents
                             ],
                             post_form(
                                 session,
@@ -566,6 +570,11 @@ def register_campaign_routes(
                                     Option("Rules for this campaign", value="rules"),
                                     name="kind",
                                 ),
+                                Label("Replaces earlier material (optional)"),
+                                Select(Option("New material", value=""),
+                                       *[Option(d["title"],value=d["id"]) for d in documents if d["id"] in active_ids],
+                                       name="supersedes"),
+                                Small("A replacement keeps the earlier text in history and removes it from current retrieval. Choose the same material type."),
                                 Label("Paste text, or choose a file"),
                                 Textarea(name="text", rows=7),
                                 Input(
@@ -791,6 +800,8 @@ def register_campaign_routes(
             if kind not in {"rules", "reference"}:
                 raise ValueError("Choose rule or reference material.")
             metadata["kind"] = kind
+            if str(form.get("supersedes", "")).strip():
+                metadata["supersedes"] = str(form["supersedes"])
             campaigns.add_document(
                 campaign_id,
                 str(form.get("title", "")),

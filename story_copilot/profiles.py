@@ -17,6 +17,7 @@ OPERATIONS = {
     "equal",
     "greater_equal",
     "greater",
+    "spend",
 }
 
 
@@ -108,8 +109,12 @@ def calculate(profile, name, values):
         result = a == b
     elif operation == "greater_equal":
         result = a >= b
+    elif operation == "spend":
+        if a < 0 or b < 0:
+            raise ValueError("A nonnegative balance and cost are required for this tool.")
+        result = {"allowed": a >= b, "remaining": a - b if a >= b else a}
     else:
         result = a > b
-    if type(result) is not bool and (not math.isfinite(result) or abs(result) > 1e18):
+    if not isinstance(result, dict) and type(result) is not bool and (not math.isfinite(result) or abs(result) > 1e18):
         raise ValueError("The calculation result exceeds the supported range.")
     return {"tool": name, "operation": operation, "inputs": values, "result": result}

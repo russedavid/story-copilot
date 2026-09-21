@@ -2,6 +2,7 @@
 
 import json
 import os
+from copy import deepcopy
 from pathlib import Path
 import re
 from urllib.parse import urlsplit
@@ -16,13 +17,20 @@ DEFAULT = {
     "context_limit": 16384,
     "output_reserve": 1800,
     "routing": {"adapters": [], "tasks": {}},
+    "planner": None,
 }
 
 
 def validate(settings):
     if not isinstance(settings, dict) or set(settings) - set(DEFAULT):
         raise ValueError("Unknown model settings.")
-    settings = {**DEFAULT, **settings}
+    settings = {**deepcopy(DEFAULT), **deepcopy(settings)}
+    planner = settings["planner"]
+    if planner is not None:
+        if not isinstance(planner, dict) or "planner" in planner:
+            raise ValueError("A dedicated planner needs one model endpoint, without nested planners.")
+        settings["planner"] = validate({**planner, "planner": None})
+        settings["planner"].pop("planner")
     url = urlsplit(settings["url"])
     if (
         url.scheme not in {"http", "https"}
@@ -70,7 +78,7 @@ def validate(settings):
 
 def load(home):
     path = Path(home) / "model-settings.json"
-    settings = json.loads(path.read_text()) if path.exists() else dict(DEFAULT)
+    settings = json.loads(path.read_text()) if path.exists() else deepcopy(DEFAULT)
     # Explicit launch-time settings may override a saved local configuration.
     for field, env in [
         ("url", "STORY_MODEL_URL"),
