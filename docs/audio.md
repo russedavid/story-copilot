@@ -12,6 +12,10 @@ python -m story_copilot.audio_worker --queue /path/to/private/audio-queue --devi
 
 For a remote worker, the capture command supports `--ssh`, `--remote-queue`, `--remote-python`, and an optional `--ssh-control` socket. The worker environment needs this package installed. Transfers are acknowledged after an idempotent import; a connection interruption retains the local spool. The UI can follow completed chunks or import them explicitly.
 
+The simplest two-computer arrangement keeps the web process and speech worker on the GPU computer, reading the same queue. Open the UI through an SSH port forward from the Mac. Set `STORY_AUDIO_SSH` to the SSH destination and `STORY_AUDIO_REMOTE_PYTHON` to that computer's installed Python environment when launching the web process; its Audio page will print a Mac capture command with the correct remote queue. `STORY_AUDIO_SSH_CONTROL`, when supplied, is the control-socket path on the Mac. The web process itself does not use that socket to record.
+
+A UI running on a different computer does not automatically read the worker's remote SQLite queue. Colocate the UI and worker, or explicitly transport completed results. A persistent worker can process multiple sessions from its queue; the UI imports only the selected session's chunks.
+
 Microphone and system channels remain distinct. Diarization labels do not identify people by themselves: map participants to speakers and characters in the campaign. Low-confidence and overlapping speech stays available for review. Different source clocks are not silently treated as a perfectly ordered conversation.
 
 Playback happens only when you press an audio control. Starting the UI, opening a session, or running an idle speech worker does not play or record sound.

@@ -72,7 +72,7 @@ def evaluate(home, workflow, output, *, adapters, progress=print):
                 (output / 'report.json').write_text(json.dumps(report, indent=2))
                 (output / 'review.html').write_text(
                     '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width">'
-                    '<style>body{font:16px/1.5 system-ui;max-width:1100px;margin:auto;padding:24px;background:#f4eee3;color:#352a20}section{border-top:1px solid #bca68e}pre{white-space:pre-wrap;overflow-wrap:anywhere}</style>'
+                    '<style>body{font:16px/1.5 system-ui;max-width:1100px;margin:auto;padding:24px;background:#f4eee3;color:#352a20}section{border-top:1px solid #bca68e}pre{white-space:pre-wrap;overflow-wrap:anywhere}details pre{max-height:34rem;overflow:auto;font:13px/1.4 ui-monospace,monospace;background:#efe5d5;padding:1rem}</style>'
                     '<h1>Task-adapter comparison</h1><p>Same input, configured base versus task adapter. Semantic review is separate from schema and source checks.</p>'
                     + ''.join(f'<section><h2>{escape(x["task"])} · {escape(x["scenario"])} · {escape(x["candidate"])}</h2>'
                               f'<p>{escape(x["expected"])}</p><pre>{escape(json.dumps(x.get("answer", x.get("error")), indent=2))}</pre>'

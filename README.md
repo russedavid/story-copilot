@@ -59,3 +59,5 @@ The test suite exercises source corrections, dialogue ordering, character knowle
 The companion [Qwen adapter toolkit](https://github.com/russedavid/qwen-ttrpg) trains and evaluates task adapters from data you supply. [Conversational Dataset Formatter](https://github.com/russedavid/format_conversation_dataset) prepares reviewed conversational targets with completion-only loss masks. Those projects manage data preparation and model training; this repository contains the interactive application. No training data or model weights are included.
 
 An optional [agent-training environment](docs/agent-training.md) exercises the same evidence tools on authored tasks with verifiable structured outcomes. A trained policy can run as a [separate live evidence planner](docs/live-planner.md), with main-model fallback and verified arithmetic. Training and workflow evaluation remain separate measurements.
+
+[Live integration findings](docs/live-integration-results.md) describe the selected model roles, the failures found by audio replay, and the measured speech/planner coexistence check.

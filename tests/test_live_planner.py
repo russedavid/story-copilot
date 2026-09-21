@@ -96,3 +96,11 @@ def test_original_learned_contract_infers_intent_without_losing_terminal_sources
     result,trace=LivePlanner(Model(),Fallback(),options={"token_counter":lambda _:1}).complete(brief(),Decision)
     assert result.intent=="state" and trace["intent_from_evidence_fields"]
     assert trace["terminal_proposal_not_applied"]["sources"]==["message"]
+
+
+def test_one_audio_chunk_does_not_join_different_private_recipients():
+    from story_copilot.copilot import _trigger
+    common=dict(speaker="F",role="facilitator",visibility="private",audio_chunk="same")
+    messages=[dict(common,ordinal=1,text="Neri sees the mark.",recipient="neri"),
+              dict(common,ordinal=2,text="Sol hears a sound.",recipient="sol")]
+    assert _trigger(messages)=="F (facilitator): Sol hears a sound."

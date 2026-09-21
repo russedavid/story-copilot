@@ -48,7 +48,7 @@ def render(report, output):
             + "</pre></details></section>"
         )
     output.write_text(
-        '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Player-agent workflow evaluation</title><style>body{font:16px system-ui;max-width:1100px;margin:auto;padding:24px;background:#f4eee3;color:#352a20}section{background:#fffbf4;padding:20px;margin:18px 0;border:1px solid #d8c8b4;border-radius:8px}pre{white-space:pre-wrap;overflow-wrap:anywhere}</style><h1>Player-agent workflow evaluation</h1><p>Original fictional scenarios. Automated checks cover access, routing and state integrity; the player contributions require separate semantic review.</p>'
+        '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Player-agent workflow evaluation</title><style>body{font:16px system-ui;max-width:1100px;margin:auto;padding:24px;background:#f4eee3;color:#352a20}section{background:#fffbf4;padding:20px;margin:18px 0;border:1px solid #d8c8b4;border-radius:8px}pre{white-space:pre-wrap;overflow-wrap:anywhere}details pre{max-height:34rem;overflow:auto;font:13px/1.4 ui-monospace,monospace;background:#efe5d5;padding:1rem}</style><h1>Player-agent workflow evaluation</h1><p>Original fictional scenarios. Automated checks cover access, routing and state integrity; the player contributions require separate semantic review.</p>'
         + "".join(sections)
     )
 

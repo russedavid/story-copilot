@@ -131,7 +131,8 @@ def _trigger(messages, *, partial_order=False):
     chunk = chunk_id(message)
     if chunk:
         siblings = [m for m in messages if chunk_id(m) == chunk
-                    and m["speaker"] == message["speaker"] and m["visibility"] == message["visibility"]]
+                    and m["speaker"] == message["speaker"] and m["visibility"] == message["visibility"]
+                    and m.get("recipient") == message.get("recipient")]
         combined = " ".join(m["text"] for m in siblings)
         if len(combined) <= 1200:
             text = combined
@@ -577,6 +578,17 @@ def make_copilot(
         documents = deepcopy(active_documents(snapshot)) + deepcopy(
             list(extra_documents)
         )
+        latest = (max(messages, key=lambda m: m["ordinal"]) if chronology.get("partial_order") else messages[-1]) if messages else {}
+        private_reply_to = next((c["name"] for c in snapshot.get("characters", [])
+                                 if c["id"] == latest.get("recipient")), None)
+        if private_reply_to:
+            documents.append({
+                "id": "response-audience", "title": "Private response audience", "pinned": True,
+                "visibility": "private", "text": packed({
+                    "recipient": private_reply_to,
+                    "instruction": "The latest contribution is addressed only to this character. Respond to that update in direct_answer, with any facilitator reminder in private_notes. Leave narration empty. Do not stage a public reveal or repeat an earlier unrelated answer. Questions concern this character's own choices only.",
+                }),
+            })
         controls = {}
         for message in messages:
             actor = message.get("character") or message.get("speaker_mapping", {}).get(
@@ -674,6 +686,7 @@ def make_copilot(
             "context_trace": packed_context["trace"],
             "system_prompt": COPILOT_SYSTEM,
             "output_reserve": config.get("output_reserve", 1800),
+            "private_reply_to": private_reply_to,
             "state": deepcopy(snapshot["state"]),
             "rules_sources": rules,
             "current_messages": messages[-8:],
@@ -1325,7 +1338,7 @@ def make_copilot(
         try:
             output, metrics = model_factory("storyteller").complete(
                 messages,
-                DirectAnswer if intent in {"rules", "state"} else NarrationAnswer,
+                DirectAnswer if intent in {"rules", "state"} or context.get("private_reply_to") else NarrationAnswer,
                 max_tokens=min(1400, context["output_reserve"]),
                 temperature=0.7,
             )
@@ -1359,9 +1372,9 @@ def make_copilot(
             if rejected_checks:
                 trace["storyteller"]["status"] = "partial"
             for kind, title, text in (
-                ("note", "Direct answer", output.direct_answer),
+                ("note", "Private guidance for " + context["private_reply_to"] if context.get("private_reply_to") else "Direct answer", output.direct_answer),
                 ("narration", "Suggested Facilitator response", output.narration),
-                ("question", "Open questions", "\n".join(output.questions)),
+                ("question", "Questions for " + context["private_reply_to"] if context.get("private_reply_to") else "Open questions", "\n".join(output.questions)),
                 ("action", "Suggested checks", "\n".join(supported_checks)),
                 ("note", "Private Facilitator notes", output.private_notes),
             ):

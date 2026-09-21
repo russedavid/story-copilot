@@ -23,3 +23,6 @@ Basic arithmetic is available without defining a game system. The resource-spend
 Spoken announcements do not silently rewrite the supplied rule library. Update the document explicitly when the table adopts a revised rule.
 
 The learned policy uses a JSON-object grammar followed by full schema validation. A property-ordered schema grammar can force a different serialization from training and prevent trailing citation fields. The live bridge accepts the original evidence contract, derives a missing intent label only from typed decision fields, and never treats those terminal values as verified answers. The serving check in `story_copilot.policy_serving_eval` exercises complete tool trajectories after export or quantization.
+
+
+A latest message addressed to one character gets a labelled private answer and private questions, with no shared narration field. Earlier private source messages remain available for continuity, but their content is not permission to reveal them to the table. This format does not verify all prose implications; the evaluation still requires a separate agency and continuity review.

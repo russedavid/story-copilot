@@ -1510,3 +1510,20 @@ def test_unknown_mapped_numeric_roll_uses_explicit_identity_without_changing_tra
     assert result["result"]["trace"]["rules"]["status"] == "complete"
     assert result["result"]["trace"]["rules"]["calculation"]["result"]
     assert next(m for m in c.messages(sid) if m["id"] == mid)["role"] == "unknown"
+
+
+def test_character_only_update_requests_private_answer_without_shared_narration(table):
+    from story_copilot.schema import DirectAnswer
+    store,c,cid,sid=table
+    ada=c.characters(cid)[0]["id"]
+    c.add_message(sid,"Facilitator","Only Ada notices a scratch. No one else sees it.",role="facilitator",recipient=ada)
+    models=Models(storyteller=lambda body:DirectAnswer(direct_answer="Only Ada knows about the scratch; keep it private."))
+    record=run(table,models)
+    call=next(x for x in models.calls if x["task"]=="storyteller")
+    assert call["schema"] is DirectAnswer
+    audience=next(d for d in call["body"]["documents"] if d["id"]=="response-audience")
+    assert audience["pinned"] and 'Ada' in audience["text"]
+    proposals=c.proposals(sid)
+    assert not any(p["kind"]=="narration" for p in proposals)
+    assert any(p["title"]=="Private guidance for Ada" for p in proposals)
+    assert all(p["visibility"]=="private" for p in proposals)

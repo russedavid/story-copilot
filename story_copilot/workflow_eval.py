@@ -20,17 +20,27 @@ from .workflow_fixtures import seed
 def render(report, output):
     cards = []
     for row in report["cases"]:
+        trace = row["run"]["result"].get("trace", {})
+        panels = [
+            ("Audio, reference script and recognition", row["asr"]),
+            ("Observed state and source classification", {"state": row["state"], "classification": trace.get("classification")}),
+            ("Evidence decisions and verified calculations", {k: trace.get(k) for k in ("decision", "rules", "verified_answer")}),
+            ("Writing and editing", {k: trace.get(k) for k in ("storyteller", "response_review")}),
+            ("Complete source, state, model calls and timing", row),
+        ]
         cards.append(f'<section id="{escape(row["id"])}"><h2>{escape(row["id"])}</h2>'
                      f'<p>{escape(row["expect"])}</p><h3>Recognized speech</h3>'
                      f'<p>{escape(row["recognized_speech"])}</p>'
                      f'<p>ASR: {row["asr_seconds"]:.2f}s · assistance: {row["assistance_seconds"]:.2f}s</p>'
                      f'<p>Mechanical checks: {escape(str(row["checks"]))}</p>'
+                     f'<p>Semantic review: {escape(str(row.get("quality_review", "pending")))}</p>'
                      + ''.join(f'<h3>{escape(p["title"])}</h3><pre>{escape(p["text"])}</pre>'
                                for p in row["proposals"] if p["kind"] != "state")
-                     + f'<details><summary>Complete source, state, model calls and timing</summary><pre>{escape(json.dumps(row, indent=2))}</pre></details></section>')
+                     + ''.join(f'<details><summary>{escape(title)}</summary><pre>{escape(json.dumps(value, indent=2))}</pre></details>'
+                               for title, value in panels) + '</section>')
     (output / "review.html").write_text(
         '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width">'
-        '<title>Audio-to-assistance evaluation</title><style>body{font:16px/1.5 system-ui;max-width:1100px;margin:auto;padding:24px;background:#f4eee3;color:#352a20}section{padding:20px;background:#fffaf3;border:1px solid #d4c4b0;margin:18px 0}pre{white-space:pre-wrap;overflow-wrap:anywhere}a{color:#764e2e}</style>'
+        '<title>Audio-to-assistance evaluation</title><style>body{font:16px/1.5 system-ui;max-width:1100px;margin:auto;padding:24px;background:#f4eee3;color:#352a20}section{padding:20px;background:#fffaf3;border:1px solid #d4c4b0;margin:18px 0}pre{white-space:pre-wrap;overflow-wrap:anywhere}a{color:#764e2e}details pre{max-height:34rem;overflow:auto;font:13px/1.4 ui-monospace,monospace;background:#efe5d5;padding:1rem}</style>'
         '<h1>Audio → assistance</h1><p>Authored synthesized voices, actual local transcription and model calls. '
         'Known fixture identities are assigned explicitly after transcription. No recording or playback. '
         'Timing sums exclude queueing and the time spent speaking; this is sequential replay, not live-latency or natural-speech accuracy.</p>'
