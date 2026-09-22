@@ -1402,7 +1402,7 @@ def make_copilot(
         trace["seconds"] = round(time.perf_counter() - started, 6)
         trace["partial"] = trace.get("response_review", {}).get(
             "status"
-        ) == "not_reviewed" or any(
+        ) in {"not_reviewed", "guarded"} or any(
             trace[task].get("status") in {"failed", "partial"}
             for task in ("classification", "rules", "storyteller")
         )

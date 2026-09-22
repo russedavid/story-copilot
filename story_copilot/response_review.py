@@ -1,11 +1,19 @@
 """One bounded editing pass; model review is not an independent quality label."""
 
 from typing import Literal
+import time
 from pydantic import BaseModel, ConfigDict, Field
 
 from .context import _Counter
 from .schema import DirectAnswer, NarrationAnswer
 from .store import packed, source_quote
+from .response_grounding import (
+    ClaimCheck,
+    claim_units,
+    sources,
+    validate_checks,
+    guarded_answer,
+)
 
 
 class Issue(BaseModel):
@@ -26,6 +34,7 @@ class ResponseReview(BaseModel):
     model_config = ConfigDict(extra="forbid")
     issues: list[Issue] = Field(max_length=6)
     revision: NarrationAnswer | None
+    claim_checks: list[ClaimCheck] = Field(default_factory=list, max_length=40)
 
 
 SYSTEM = """Review a private facilitator-assistance draft against the supplied context.
@@ -60,61 +69,144 @@ menu instead of the requested NPC reply, or buries the usable response under red
 Do not rewrite merely to impose your preferred style or remove harmless fictional colour.
 """
 
+SYSTEM += """
+required_claims lists consequential sentences across ALL fields, including private_notes.
+Assess each ID exactly once in claim_checks. Supported factual claims require exact quotations from
+claim_sources; cite source_id and quote. Quotes must support the entire assertion, including gestures,
+attention and feelings. 'Leo has not seen the mark' does not establish where Leo looks or how Leo feels.
+Unknown, missing and zero are different. An unanswered rules question cannot support a zero bonus.
+Use not_an_assertion only for a question, conditional possibility, uncertainty or offered choice,
+never to excuse an unsupported declarative sentence. Otherwise use unsupported and identify the defect
+in issues. Remove it in the revision or ask its owner. Keep NPC speech and consistent world invention.
+Do not add a fresh player reaction while fixing another. The revised response will be checked again.
+claim_sources is an index into context: conversation and rule IDs appear there; state IDs identify
+the corresponding category/key in context.state. Quote the actual source text, not the index metadata.
+For literal_player_subject claims, retain one source's wording when restating the player's state or action.
+Do not add a gesture or feeling through paraphrase. You may omit an unnecessary player description;
+NPC dialogue and world reactions can still use original prose. Rendered resource statements are supplied
+from the current ledger. If you cannot support a player clause, remove it or ask that player to respond.
+"""
+
 
 def review_response(body, answer, model, options):
-    request = {"context": body, "draft": answer.model_dump()}
     counter = _Counter(options.get("tokenizer"), options.get("token_counter"))
     budget = (
         options.get("context_limit", 16384) - options.get("safety_margin", 512) - 1400
     )
-    trace = {
-        "prompt_tokens": counter.count(request, SYSTEM),
-        "prompt_budget": budget,
-        "original": answer.model_dump(),
-    }
-    if trace["prompt_tokens"] > budget:
-        return answer, {
-            **trace,
-            "status": "not_reviewed",
-            "reason": "The complete source and draft exceed the review context budget.",
-        }
-    try:
-        result, metrics = model.complete(
-            [
-                {"role": "system", "content": SYSTEM},
-                {"role": "user", "content": packed(request)},
-            ],
-            ResponseReview,
-            max_tokens=1400,
-            temperature=0,
-            timeout=60,
-        )
-        trace["model"] = metrics
-        trace["review"] = result.model_dump()
-        if bool(result.issues) != (result.revision is not None):
-            raise ValueError(
-                "A revision must address at least one specific defect; a clean review must not rewrite the response."
-            )
-        source = "\n".join(
-            [
-                answer.direct_answer,
-                answer.narration,
-                *answer.questions,
-                *[c.text for c in answer.requested_checks],
-                answer.private_notes,
+    trace = {"prompt_budget": budget, "original": answer.model_dump(), "attempts": []}
+    evidence = sources(body)
+    started = time.monotonic()
+    feedback = None
+    for attempt_number in range(2):
+        units = claim_units(body, answer)
+        request = {
+            "context": body,
+            "draft": answer.model_dump(),
+            "required_claims": units,
+            "claim_sources": [
+                {
+                    k: s[k]
+                    for k in (
+                        "id",
+                        "kind",
+                        "visibility",
+                        *(("text",) if s["id"].startswith("state:resources:") else ()),
+                    )
+                }
+                for s in evidence
             ]
-        )
-        for issue in result.issues:
-            source_quote(source, issue.quote)
-        revision = result.revision
-        if revision is not None and isinstance(answer, DirectAnswer):
-            revision = DirectAnswer.model_validate(revision.model_dump())
-        trace["status"] = "revised" if result.issues else "no_issue_found"
-        return revision or answer, trace
-    except Exception as exc:
-        trace.update(
-            status="not_reviewed",
-            reason=str(exc),
-            model=getattr(exc, "trace", trace.get("model", {})),
-        )
-        return answer, trace
+            if units
+            else [],
+        }
+        if feedback:
+            request["validation_feedback"] = feedback
+        attempt = {
+            "prompt_tokens": counter.count(request, SYSTEM),
+            "draft": answer.model_dump(),
+            "required_claims": units,
+        }
+        trace["attempts"].append(attempt)
+        trace["prompt_tokens"] = attempt["prompt_tokens"]
+        try:
+            if attempt["prompt_tokens"] > budget:
+                raise ValueError(
+                    "The complete source and draft exceed the review context budget."
+                )
+            remaining = 90 - (time.monotonic() - started)
+            if remaining <= 0:
+                raise ValueError("The bounded review deadline expired.")
+            result, metrics = model.complete(
+                [
+                    {"role": "system", "content": SYSTEM},
+                    {"role": "user", "content": packed(request)},
+                ],
+                ResponseReview,
+                max_tokens=1400,
+                temperature=0,
+                timeout=min(60, remaining),
+            )
+            trace["model"] = metrics
+            trace["review"] = result.model_dump()
+            attempt.update(model=metrics, review=result.model_dump())
+            unsupported = validate_checks(units, result.claim_checks, evidence)
+            if unsupported and not result.issues:
+                raise ValueError(
+                    "Unsupported claims require an explicit issue and repair."
+                )
+            if bool(result.issues) != (result.revision is not None):
+                raise ValueError(
+                    "A revision must address at least one specific defect; a clean review must not rewrite the response."
+                )
+            source = "\n".join(
+                [
+                    answer.direct_answer,
+                    answer.narration,
+                    *answer.questions,
+                    *[c.text for c in answer.requested_checks],
+                    answer.private_notes,
+                ]
+            )
+            for issue in result.issues:
+                source_quote(source, issue.quote)
+            revision = result.revision
+            if revision is not None and isinstance(answer, DirectAnswer):
+                revision = DirectAnswer.model_validate(revision.model_dump())
+            if revision is None:
+                trace["status"] = "revised" if attempt_number else "no_issue_found"
+                return answer, trace
+            trusted = {(u["field"], u["text"]) for u in units if u not in unsupported}
+            revised_units = claim_units(body, revision)
+            unverified = [
+                u for u in revised_units if (u["field"], u["text"]) not in trusted
+            ]
+            if not unverified:
+                trace["status"] = "revised"
+                return revision, trace
+            answer = revision
+            if attempt_number == 1:
+                trace.update(
+                    status="guarded",
+                    reason="The revision introduced additional unverified claims.",
+                )
+                return guarded_answer(answer, unverified), trace
+        except Exception as exc:
+            attempt["error"] = str(exc)
+            if getattr(exc, "trace", None):
+                attempt["model"] = exc.trace
+            if (
+                attempt_number == 0
+                and attempt["prompt_tokens"] <= budget
+                and time.monotonic() - started < 85
+            ):
+                feedback = (
+                    str(exc)
+                    + " Reassess the same draft and sources. Correct the review or remove the unsupported assertion."
+                )
+                continue
+            trace.update(
+                status="guarded" if units else "not_reviewed",
+                reason=str(exc),
+            )
+            if getattr(exc, "trace", None):
+                trace["model"] = exc.trace
+            return guarded_answer(answer, units) if units else answer, trace

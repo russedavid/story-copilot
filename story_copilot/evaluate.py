@@ -112,10 +112,13 @@ STEPS = [
 
 def summarize(run):
     trace = run["result"].get("trace", {})
-    models = [
-        trace.get(stage, {}).get("model", {})
-        for stage in ["classification", "rules", "storyteller", "response_review"]
-    ]
+    models = []
+    for stage in ("classification", "rules", "storyteller", "response_review"):
+        record = trace.get(stage, {})
+        if "attempts" in record:
+            models.extend(attempt.get("model", {}) for attempt in record["attempts"])
+        else:
+            models.append(record.get("model", {}))
     models += [
         step.get("model", {}) for step in trace.get("decision", {}).get("steps", [])
     ]

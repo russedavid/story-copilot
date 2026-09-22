@@ -79,3 +79,27 @@ python -m story_copilot.adapter_eval --home /path/to/workspace \
 ```
 
 Use your server's actual adapter IDs. The suite does not train on the evaluation cases or silently select a winner. Judge current intent, source fidelity, rule correctness, player agency, knowledge boundaries, and usable voice separately before setting routing defaults.
+
+## Retained natural conversation
+
+Use the actual retained audio for natural-speech development checks. Exporting from a queue is read-only and retains original timing and PCM hashes:
+
+```sh
+python -m story_copilot.recorded_audio_eval prepare \
+  --source-queue /path/to/private/source-queue --session AUDIO_SESSION \
+  --output /path/to/private/recorded-fixtures
+python -m story_copilot.recorded_audio_eval transcribe \
+  --fixtures /path/to/private/recorded-fixtures --device-index 1 \
+  --output /path/to/private/fresh-transcription
+python -m story_copilot.recorded_audio_eval assist \
+  --fixtures /path/to/private/recorded-fixtures \
+  --transcribed /path/to/private/fresh-transcription/report.json \
+  --home /path/to/workspace --context /path/to/private/context.json \
+  --output /path/to/private/natural-workflow
+```
+
+The context JSON may contain `direction`, `characters` (`name`, `sheet`), `documents` (`title`, `text`, `visibility`, `metadata`), and explicitly reviewed `speaker_mappings`. Empty context keeps roles unknown. Mappings require `mapping_transcription_sha256` to match the exact fresh report, since another diarization of the same audio can assign different voice labels. Record the origin and uncertainty of setup information in `provenance`.
+
+Prior ASR is retained as an unreviewed comparison, not acoustic gold. This workflow does not claim WER, DER, verified identity, or held-out generalization without the corresponding independent references and split checks. Fresh recognized words, not the earlier transcript, enter the application. Review substantive assistance failures separately from import, provenance, and publication checks. Neither preparation nor replay opens a microphone or plays audio.
+
+[Source-grounded review](response-grounding.md) describes claim assessment and the regression replay command. A suppressed answer may prevent an unsupported claim while still failing usefulness; score both properties.
