@@ -132,8 +132,22 @@ def test_npc_invention_and_questions_remain_available():
     class Clean:
         def complete(self, messages, *args, **kwargs):
             request = json.loads(messages[-1]["content"])
-            assert request["required_claims"] == []
-            return ResponseReview(issues=[], revision=None), {}
+            return (
+                ResponseReview(
+                    issues=[],
+                    revision=None,
+                    claim_checks=[
+                        ClaimCheck(
+                            id=u["id"],
+                            verdict="creative_proposal",
+                            actor="caretaker",
+                            reason="Proposed NPC reply.",
+                        )
+                        for u in request["required_claims"]
+                    ],
+                ),
+                {},
+            )
 
     draft = NarrationAnswer(
         narration='The caretaker says, "The ferry leaves at dusk."',
@@ -150,19 +164,22 @@ def test_repair_cannot_replace_one_invented_player_action_with_another():
         def complete(self, messages, *args, **kwargs):
             self.calls += 1
             request = json.loads(messages[-1]["content"])
-            return ResponseReview(
-                claim_checks=checks(request),
-                issues=[
-                    {
-                        "kind": "player_agency",
-                        "quote": request["draft"]["narration"],
-                        "reason": "No source supports this reaction.",
-                    }
-                ],
-                revision=NarrationAnswer(
-                    narration="Ivo nods." if self.calls == 1 else "Ivo waves."
+            return (
+                ResponseReview(
+                    claim_checks=checks(request),
+                    issues=[
+                        {
+                            "kind": "player_agency",
+                            "quote": request["draft"]["narration"],
+                            "reason": "No source supports this reaction.",
+                        }
+                    ],
+                    revision=NarrationAnswer(
+                        narration="Ivo nods." if self.calls == 1 else "Ivo waves."
+                    ),
                 ),
-            ), {}
+                {},
+            )
 
     model = RepeatedError()
     result, trace = review_response(
@@ -242,7 +259,7 @@ def test_private_commentary_does_not_turn_banter_into_an_event():
         narration="The door stays closed.",
         private_notes="Someone was attacked during the conversation.",
     )
-    units = claim_units(context, answer)
+    units = [u for u in claim_units(context, answer) if u["field"] == "private_notes"]
     assert len(units) == 1 and units[0]["kinds"] == ["private_context"]
     check = ClaimCheck(
         id=units[0]["id"],
@@ -261,11 +278,26 @@ def test_private_advice_can_remain_advice_without_a_fabricated_source():
     class Advice:
         def complete(self, messages, *args, **kwargs):
             request = json.loads(messages[-1]["content"])
-            return ResponseReview(
-                issues=[],
-                revision=None,
-                claim_checks=checks(request, verdict="not_an_assertion"),
-            ), {}
+            return (
+                ResponseReview(
+                    issues=[],
+                    revision=None,
+                    claim_checks=[
+                        ClaimCheck(
+                            id=u["id"],
+                            verdict=(
+                                "creative_proposal"
+                                if u["field"] == "narration"
+                                else "not_an_assertion"
+                            ),
+                            actor="ferryman" if u["field"] == "narration" else "",
+                            reason="NPC proposal or imperative advice.",
+                        )
+                        for u in request["required_claims"]
+                    ],
+                ),
+                {},
+            )
 
     answer = NarrationAnswer(
         narration="The ferryman waits.",
@@ -334,6 +366,7 @@ def test_creative_npc_can_address_a_player_without_inventing_the_players_reply()
             private_notes="Someone attacked the visitor.",
         ),
     )
+    history = [u for u in history if u["field"] == "private_notes"]
     check.id = history[0]["id"]
     check.actor = "Someone"
     with pytest.raises(ValueError, match="private factual history"):
@@ -345,7 +378,7 @@ def test_quoted_npc_dialogue_keeps_ownership_across_sentences():
     answer = NarrationAnswer(
         narration="The caretaker says, “The ferry leaves at dusk. You can wait here until then.”"
     )
-    units = claim_units(context, answer)
+    units = [u for u in claim_units(context, answer) if u["text"].startswith("You")]
     assert (
         len(units) == 1
         and units[0]["quoted_dialogue"]
@@ -369,29 +402,143 @@ def test_quoted_npc_dialogue_keeps_ownership_across_sentences():
 
 def test_npc_reply_in_direct_answer_and_pronoun_continuations_are_preserved():
     context = body()
-    answer = NarrationAnswer(narration="", direct_answer='The caretaker says, “You can wait here. Your choice.”')
+    answer = NarrationAnswer(
+        narration="",
+        direct_answer="The caretaker says, “You can wait here. Your choice.”",
+    )
     units = claim_units(context, answer)
     for unit in units:
-        check = ClaimCheck(id=unit["id"], verdict="creative_proposal", actor="caretaker", reason="NPC offers a choice.")
+        check = ClaimCheck(
+            id=unit["id"],
+            verdict="creative_proposal",
+            actor="caretaker",
+            reason="NPC offers a choice.",
+        )
         assert not validate_checks([unit], [check], sources(context))
-    answer = NarrationAnswer(narration="The caretaker lights the fire. She offers Ivo a seat.")
-    units = claim_units(context, answer)
-    check = ClaimCheck(id=units[0]["id"], verdict="creative_proposal", actor="caretaker", reason="NPC action; player may decline.")
+    answer = NarrationAnswer(
+        narration="The caretaker lights the fire. She offers Ivo a seat."
+    )
+    units = [u for u in claim_units(context, answer) if u["text"].startswith("She")]
+    check = ClaimCheck(
+        id=units[0]["id"],
+        verdict="creative_proposal",
+        actor="caretaker",
+        reason="NPC action; player may decline.",
+    )
     assert not validate_checks(units, [check], sources(context))
-    check = ClaimCheck.model_validate({**check.model_dump(), "support": [{"source_id": "invented", "quote": "Made up evidence"}]})
-    with pytest.raises(ValueError, match="unavailable"):
+    check.actor = "Tess"
+    with pytest.raises(ValueError, match="player performance"):
         validate_checks(units, [check], sources(context))
 
 
 def test_clause_removal_does_not_leave_unbalanced_dialogue_quotes():
     from story_copilot.response_grounding import remove_claims
 
-    answer = NarrationAnswer(narration='The caretaker says, “Wait here. Ivo nods.”')
+    answer = NarrationAnswer(narration="The caretaker says, “Wait here. Ivo nods.”")
     result = remove_claims(answer, [{"field": "narration", "text": "Ivo nods.”"}])
     assert result.narration == "The caretaker says, Wait here."
-    answer = NarrationAnswer(narration='“Ivo nods. The boat is ready.”')
-    result = remove_claims(answer, [{"field": "narration", "text": '“Ivo nods.'}])
+    answer = NarrationAnswer(narration="“Ivo nods. The boat is ready.”")
+    result = remove_claims(answer, [{"field": "narration", "text": "“Ivo nods."}])
     assert result.narration == "The boat is ready."
-    answer = NarrationAnswer(narration='“Wait here. Ivo nods. The boat is ready.”')
-    result = remove_claims(answer, [{"field": "narration", "text": 'Ivo nods.'}])
-    assert result.narration.startswith('“') and result.narration.endswith('”')
+    answer = NarrationAnswer(narration="“Wait here. Ivo nods. The boat is ready.”")
+    result = remove_claims(answer, [{"field": "narration", "text": "Ivo nods."}])
+    assert result.narration.startswith("“") and result.narration.endswith("”")
+
+
+def test_npc_absence_claim_cannot_be_supported_by_explicit_uncertainty():
+    context = {
+        "documents": [
+            {
+                "id": "scene",
+                "text": "Nobody knows whether visitors arrived.",
+                "visibility": "public",
+            }
+        ]
+    }
+    units = claim_units(context, NarrationAnswer(narration='"No visitors."'))
+    assert units[0]["kinds"] == ["world_context"]
+    check = ClaimCheck(
+        id=units[0]["id"],
+        verdict="supported",
+        support=[
+            {"source_id": "scene", "quote": "Nobody knows whether visitors arrived."}
+        ],
+        reason="Deliberately false entailment.",
+    )
+    with pytest.raises(ValueError, match="unknown source"):
+        validate_checks(units, [check], sources(context))
+    context["documents"][0]["text"] = "No visitors."
+    check.support[0].quote = "No visitors."
+    assert not validate_checks(units, [check], sources(context))
+
+
+def test_last_repair_keeps_verified_uncertainty_instead_of_restoring_old_certainty():
+    context = {
+        "documents": [
+            {
+                "id": "scene",
+                "text": "Nobody knows whether visitors arrived.",
+                "visibility": "public",
+            }
+        ]
+    }
+
+    class Repair:
+        calls = 0
+
+        def complete(self, messages, *args, **kwargs):
+            self.calls += 1
+            request = json.loads(messages[-1]["content"])
+            assessed = [
+                ClaimCheck(
+                    id=u["id"],
+                    verdict="supported",
+                    support=[
+                        {
+                            "source_id": "scene",
+                            "quote": "Nobody knows whether visitors arrived.",
+                        }
+                    ],
+                    reason="Faulty judgment, independently rejected.",
+                )
+                for u in request["required_claims"]
+            ]
+            if self.calls == 1:
+                return (
+                    ResponseReview(issues=[], revision=None, claim_checks=assessed),
+                    {},
+                )
+            return (
+                ResponseReview(
+                    issues=[
+                        {
+                            "kind": "continuity",
+                            "quote": '"No visitors."',
+                            "reason": "Absence is unknown.",
+                        }
+                    ],
+                    claim_checks=assessed,
+                    revision=NarrationAnswer(
+                        narration='"I don\'t know." The stranger adjusts his hat.'
+                    ),
+                ),
+                {},
+            )
+
+    answer, trace = review_response(
+        context, NarrationAnswer(narration='"No visitors."'), Repair(), OPTIONS
+    )
+    assert answer.direct_answer == "Nobody knows whether visitors arrived."
+    assert "No visitors" not in answer.narration
+    assert trace["status"] == "guarded" and len(trace["attempts"]) == 2
+
+
+def test_atomic_uncertainty_does_not_whitelist_embedded_events_or_player_speech():
+    from story_copilot.response_grounding import literal_checks
+
+    for text in [
+        '"I do not know why the stranger left."',
+        'Ivo says, "I do not know."',
+    ]:
+        units = claim_units(body(), NarrationAnswer(narration=text))
+        assert not literal_checks(units, [])

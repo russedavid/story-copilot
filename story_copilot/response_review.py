@@ -18,6 +18,8 @@ from .response_grounding import (
     assess_claims,
     remove_claims,
     issue_units,
+    uncertainty_sources,
+    preserve_uncertainty,
 )
 
 
@@ -78,6 +80,9 @@ Do not rewrite merely to impose your preferred style or remove harmless fictiona
 
 SYSTEM += """
 required_claims lists consequential sentences across ALL fields, including private_notes.
+World-context statements also need assessment, including short replies inside NPC dialogue.
+New NPC voice can add consistent texture but cannot invent the answer to an unresolved fact.
+An explicit unknown is not evidence of absence. Do not cite a draft as its own source.
 Assess each ID exactly once in claim_checks. Supported factual claims require exact quotations from
 claim_sources; cite source_id and quote. Quotes must support the entire assertion, including gestures,
 attention and feelings. 'Leo has not seen the mark' does not establish where Leo looks or how Leo feels.
@@ -117,33 +122,43 @@ or have the NPC explain what must be checked before making the stronger claim.
 def review_response(body, answer, model, options):
     counter = _Counter(options.get("tokenizer"), options.get("token_counter"))
     budget = (
-        options.get("context_limit", 16384) - options.get("safety_margin", 512) - 1400
+        options.get("context_limit", 16384) - options.get("safety_margin", 512) - 2200
     )
     trace = {"prompt_budget": budget, "original": answer.model_dump(), "attempts": []}
     evidence = sources(body)
     started = time.monotonic()
     feedback = None
     safe_answer = None
+    uncertainty = {}
+
+    def guarded(value):
+        if uncertainty:
+            trace["uncertainty_source_fallback"] = uncertainty
+            return preserve_uncertainty(value, uncertainty)
+        return value
+
     for attempt_number in range(2):
         units = claim_units(body, answer)
         request = {
             "context": body,
             "draft": answer.model_dump(),
             "required_claims": units,
-            "claim_sources": [
-                {
-                    k: s[k]
-                    for k in (
-                        "id",
-                        "kind",
-                        "visibility",
-                        *(("text",) if s["id"].startswith("state:") else ()),
-                    )
-                }
-                for s in evidence
-            ]
-            if units
-            else [],
+            "claim_sources": (
+                [
+                    {
+                        k: s[k]
+                        for k in (
+                            "id",
+                            "kind",
+                            "visibility",
+                            *(("text",) if s["id"].startswith("state:") else ()),
+                        )
+                    }
+                    for s in evidence
+                ]
+                if units
+                else []
+            ),
         }
         if feedback:
             request["validation_feedback"] = feedback
@@ -168,7 +183,7 @@ def review_response(body, answer, model, options):
                     {"role": "user", "content": packed(request)},
                 ],
                 ResponseReview,
-                max_tokens=1400,
+                max_tokens=2200,
                 temperature=0,
                 timeout=min(60, remaining),
             )
@@ -185,6 +200,9 @@ def review_response(body, answer, model, options):
             )
             attempt["claim_validation_failures"] = failures
             accepted_units = [u for u in units if u not in unsupported]
+            uncertainty.update(
+                uncertainty_sources(units, result.claim_checks, evidence)
+            )
             safe_answer, safe_edits = source_wording(
                 answer, accepted_units, approved, evidence
             )
@@ -229,7 +247,7 @@ def review_response(body, answer, model, options):
                         reason="Unverified claims were removed; independently supported content was retained.",
                     )
                     trace.setdefault("source_wording", []).extend(safe_edits)
-                    return safe_answer, trace
+                    return guarded(safe_answer), trace
                 answer, edits = source_wording(
                     answer, units, result.claim_checks, evidence
                 )
@@ -278,7 +296,10 @@ def review_response(body, answer, model, options):
                     status="guarded",
                     reason="The revision introduced additional unverified claims.",
                 )
-                return safe_answer, trace
+                # Do not restore an obsolete draft after the editor corrected it.
+                # Keep only independently verified or previously accepted clauses
+                # from the latest revision; its unverified additions are removed.
+                return guarded(remove_claims(revision, unverified)), trace
         except Exception as exc:
             attempt["error"] = str(exc)
             if getattr(exc, "trace", None):
@@ -299,6 +320,11 @@ def review_response(body, answer, model, options):
             )
             if getattr(exc, "trace", None):
                 trace["model"] = exc.trace
-            return safe_answer if safe_answer is not None else guarded_answer(
-                answer, units
-            ) if units else answer, trace
+            return (
+                guarded(
+                    safe_answer
+                    if safe_answer is not None
+                    else guarded_answer(answer, units) if units else answer
+                ),
+                trace,
+            )

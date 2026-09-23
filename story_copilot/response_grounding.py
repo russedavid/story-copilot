@@ -45,6 +45,16 @@ ZERO_RULE = re.compile(
     r"\b(?:no|zero|0)\s+(?:\w+\s+){0,2}(?:bonus|modifier|penalty|advantage|cost|damage)\b|\b(?:bonus|modifier|penalty|advantage|cost|damage)\b\s+(?:is|of|equals|=)\s*(?:zero|0|none)\b",
     re.I,
 )
+UNCERTAINTY = re.compile(
+    r"\b(?:unknown|unspecified|uncertain|unconfirmed|unverified|not (?:known|established|confirmed)|"
+    r"(?:no one|nobody) knows|(?:don't|doesn't|do not|does not) know)\b",
+    re.I,
+)
+CONDITIONAL = re.compile(r"\b(?:if|could|may|might|perhaps|maybe|whether)\b", re.I)
+UNCERTAINTY_ONLY = re.compile(
+    r"""["“]?(?:I (?:do not|don't) know|I(?: am|'m) not sure|(?:That|It) (?:is|remains) (?:unknown|uncertain|unconfirmed|unverified|not known|not established)|Unknown)[.!]?["”]?""",
+    re.I,
+)
 
 
 def text_fields(answer):
@@ -126,7 +136,11 @@ def claim_units(body, answer):
             quoted = quoted or value.startswith(('"', "“", "'", "‘"))
             first_quote = re.search('[“"]', match[0])
             actor_match = actor.search(match[0])
-            if first_quote and actor_match and first_quote.start() < actor_match.start():
+            if (
+                first_quote
+                and actor_match
+                and first_quote.start() < actor_match.start()
+            ):
                 quoted, player_speech = quote_context(
                     text, match.start() + first_quote.start() + 1, names
                 )
@@ -137,6 +151,8 @@ def claim_units(body, answer):
                 kinds.append("rule")
             if field == "private_notes":
                 kinds.append("private_context")
+            if not kinds and field in {"narration", "direct_answer"}:
+                kinds.append("world_context")
             if kinds and not value.rstrip("\"'’”").endswith("?"):
                 subject = next(
                     (
@@ -158,6 +174,7 @@ def claim_units(body, answer):
                         "kinds": kinds,
                         "can_be_nonassertion": (
                             bool(NONASSERTION.search(value))
+                            or bool(UNCERTAINTY_ONLY.fullmatch(value))
                             or bool(
                                 re.match(
                                     r"^(?:Keep|Maintain|Preserve|Avoid|Leave|Ask|Do not|Don't|Consider|Treat|Remember|Suggestion:|Proposal:)",
@@ -171,7 +188,9 @@ def claim_units(body, answer):
                         "literal_player_subject": subject,
                         "quoted_dialogue": quoted,
                         "quoted_player_speech": player_speech,
-                        "preceding_text": text[max(0, match.start() - 240) : match.start()],
+                        "preceding_text": text[
+                            max(0, match.start() - 240) : match.start()
+                        ],
                         "player_names": names,
                         "mentioned_players": [
                             name
@@ -236,9 +255,11 @@ def sources(body):
                             result.append(
                                 {
                                     "id": item["id"],
-                                    "kind": "rule"
-                                    if observation["tool"] == "rules"
-                                    else "conversation",
+                                    "kind": (
+                                        "rule"
+                                        if observation["tool"] == "rules"
+                                        else "conversation"
+                                    ),
                                     "text": item["text"],
                                     "visibility": item.get("visibility", "private"),
                                 }
@@ -340,19 +361,25 @@ def validate_checks(units, checks, evidence):
                     and check.actor.casefold() not in unit["text"].casefold()
                     and not (
                         re.match(r"^(?:She|He|They|It)\b", unit["text"], re.I)
-                        and check.actor.casefold() in unit.get("preceding_text", "").casefold()
+                        and check.actor.casefold()
+                        in unit.get("preceding_text", "").casefold()
                     )
                 )
             ):
                 raise ValueError(
                     "Creative proposals belong to NPCs or the environment in narration, not player performance or private factual history."
                 )
-            for support in check.support:
-                if support.source_id not in lookup:
-                    raise ValueError("Creative support cites an unavailable source.")
-                source_quote(lookup[support.source_id]["text"], support.quote)
+            # This verdict is explicitly proposed fiction, not a sourced fact.
+            # Its optional citations cannot establish history or be rendered as
+            # verified wording. The actor/agency constraints still apply.
             continue
         if check.verdict == "not_an_assertion":
+            if unit.get("quoted_player_speech") or (
+                unit.get("literal_player_subject") and re.search('[“"]', unit["text"])
+            ):
+                raise ValueError(
+                    "Invented player dialogue still needs evidence, even when its words express uncertainty."
+                )
             if not unit["can_be_nonassertion"]:
                 raise ValueError(
                     "A declarative claim needs evidence or an unsupported verdict."
@@ -380,6 +407,14 @@ def validate_checks(units, checks, evidence):
         ):
             raise ValueError(
                 "Zero is a rule value requiring explicit support; an unspecified or absent rule cannot establish zero."
+            )
+        if (
+            any(UNCERTAINTY.search(s.quote) for s in check.support)
+            and not UNCERTAINTY.search(unit["text"])
+            and not CONDITIONAL.search(unit["text"])
+        ):
+            raise ValueError(
+                "An explicitly unknown source cannot support a definite answer. Preserve its uncertainty or quote only an independently established fact."
             )
         if unit["field"] == "narration" and all(
             s["visibility"] != "public" for s in selected
@@ -482,6 +517,52 @@ def assess_claims(units, checks, evidence):
     return approved, rejected, failures
 
 
+def uncertainty_sources(units, checks, evidence):
+    """Keep verified source wording when a model turns explicit uncertainty into fact."""
+    lookup = {source["id"]: source for source in evidence}
+    candidates, affected = {}, set()
+    for unit in units:
+        for check in [c for c in checks if c.id == unit["id"]]:
+            for support in check.support:
+                source = lookup.get(support.source_id)
+                if not source:
+                    continue
+                try:
+                    quote = source_quote(source["text"], support.quote)
+                except ValueError:
+                    continue
+                if len(quote.split()) < 3:
+                    continue
+                if check.verdict == "supported" or UNCERTAINTY.search(quote):
+                    candidates.setdefault(unit["field"], []).append(
+                        {"source_id": source["id"], "quote": quote}
+                    )
+                if (
+                    UNCERTAINTY.search(quote)
+                    and not UNCERTAINTY.search(unit["text"])
+                    and not CONDITIONAL.search(unit["text"])
+                ):
+                    affected.add(unit["field"])
+    return {field: candidates[field] for field in affected if field in candidates}
+
+
+def preserve_uncertainty(answer, corrections):
+    """Fall back to actual source facts, not adjacent invented justification."""
+    result = deepcopy(answer)
+    for field, facts in corrections.items():
+        text = " ".join(dict.fromkeys(item["quote"] for item in facts))
+        if field == "narration":
+            result.narration = ""
+            result.direct_answer = "\n".join(filter(None, [result.direct_answer, text]))
+        elif field in {"direct_answer", "private_notes"}:
+            setattr(result, field, text)
+        elif field.startswith("questions/") or field.startswith("checks/"):
+            # Earlier filtering can change list indexes. Keep the source fact in
+            # private guidance rather than putting it on a different question.
+            result.private_notes = "\n".join(filter(None, [result.private_notes, text]))
+    return type(answer).model_validate(result.model_dump())
+
+
 def clean_removed_quotes(text):
     """Drop orphaned dialogue delimiters after deletion; never invent replacement prose."""
     opened, orphaned = [], []
@@ -555,6 +636,19 @@ def literal_checks(units, evidence):
     """Recognize exact source restatements introduced by a repair without a third call."""
     result = []
     for unit in units:
+        if (
+            unit["kinds"] == ["world_context"]
+            and UNCERTAINTY_ONLY.fullmatch(unit["text"])
+            and not unit.get("quoted_player_speech")
+        ):
+            result.append(
+                ClaimCheck(
+                    id=unit["id"],
+                    verdict="not_an_assertion",
+                    reason="Explicit uncertainty makes no definite world or player claim.",
+                )
+            )
+            continue
         support = []
         for source in evidence:
             try:

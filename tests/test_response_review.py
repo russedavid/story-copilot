@@ -1,4 +1,6 @@
 import pytest
+import json
+from story_copilot.response_grounding import ClaimCheck, claim_units
 from jsonschema import Draft202012Validator
 
 from story_copilot.response_review import ResponseReview, review_response
@@ -33,7 +35,39 @@ def test_anchored_edit_preserves_original_and_does_not_claim_independent_accurac
             revision=edited,
         )
     )
-    result, trace = review_response({}, draft, model, OPTIONS)
+    first = model.answer
+
+    class Repair:
+        def complete(self, messages, *args, **kwargs):
+            request = json.loads(messages[-1]["content"])
+            if request["draft"]["narration"] == draft.narration:
+                first.claim_checks = [
+                    ClaimCheck(
+                        id=u["id"],
+                        verdict="unsupported",
+                        reason="Player has not spoken.",
+                    )
+                    for u in request["required_claims"]
+                ]
+                return first, {}
+            return (
+                ResponseReview(
+                    issues=[],
+                    revision=None,
+                    claim_checks=[
+                        ClaimCheck(
+                            id=u["id"],
+                            verdict="creative_proposal",
+                            actor="caretaker",
+                            reason="NPC proposal.",
+                        )
+                        for u in request["required_claims"]
+                    ],
+                ),
+                {},
+            )
+
+    result, trace = review_response({}, draft, Repair(), OPTIONS)
     assert result == edited and trace["original"] == draft.model_dump()
     assert trace["status"] == "revised"
 
@@ -52,8 +86,17 @@ def test_unanchored_criticism_does_not_silently_replace_the_draft():
             revision=NarrationAnswer(narration="Replacement."),
         )
     )
+    model.answer.claim_checks = [
+        ClaimCheck(
+            id=u["id"],
+            verdict="creative_proposal",
+            actor="caretaker",
+            reason="NPC proposal.",
+        )
+        for u in claim_units({}, draft)
+    ]
     result, trace = review_response({}, draft, model, OPTIONS)
-    assert result == draft and trace["status"] == "not_reviewed"
+    assert result == draft and trace["status"] == "guarded"
 
 
 def test_context_limit_does_not_drop_sources_to_force_a_review():
@@ -61,7 +104,8 @@ def test_context_limit_does_not_drop_sources_to_force_a_review():
     result, trace = review_response(
         {"source": "a" * 20000}, draft, Model(None), {"context_limit": 4096}
     )
-    assert result == draft and trace["status"] == "not_reviewed"
+    assert not result.narration and trace["status"] == "guarded"
+    assert trace["original"] == draft.model_dump()
     assert "model" not in trace
 
 
