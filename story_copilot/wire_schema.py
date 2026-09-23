@@ -3,7 +3,7 @@
 import copy
 
 
-WIRE_SCHEMA_VERSION = 4
+WIRE_SCHEMA_VERSION = 5
 
 
 def wire_schema(model):
@@ -14,7 +14,9 @@ def wire_schema(model):
         "Decision",
         "NarrationAnswer",
         "DirectAnswer",
+        "SceneAnswer",
         "ResponseReview",
+        "CompactResponseReview",
         "PlayerReply",
         "ScopedPlayerReply",
         "PlayerDecision",

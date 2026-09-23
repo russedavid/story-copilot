@@ -10,7 +10,7 @@ Start the configured services in the foreground:
 python -m story_copilot.local_stack --config /private/local-stack.json
 ```
 
-The launcher starts services in order, waits for each readiness check, and stops its own process groups if a service exits. Ctrl-C or SIGTERM shuts down the stack. It refuses configured ports that are already occupied and does not stop another process to free them. Each start creates a new private run directory, with service logs and `status.json`; `current.json` under the run root identifies the latest run. It does not start microphone or system-audio capture.
+The launcher starts services in order, waits for each readiness check, and stops its own process groups if a service exits. Ctrl-C or SIGTERM shuts down the stack. It refuses configured ports that are already occupied and does not stop another process to free them. Each start creates a new private run directory, with service logs and `status.json`; `current.json` under the run root identifies the latest run and supervisor PID. It does not start microphone or system-audio capture.
 
 A private configuration has this shape (replace the paths and model alias):
 
@@ -54,6 +54,7 @@ A private configuration has this shape (replace the paths and model alias):
       ],
       "env": {
         "STORY_TOKENIZER": "/srv/story/models/tokenizer",
+        "STORY_MAX_CONTEXT_TOKENS": "32768",
         "STORY_MODEL_METADATA": "{run}/model/run.json"
       },
       "health_url": "http://127.0.0.1:5022/"

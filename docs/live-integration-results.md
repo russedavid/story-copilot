@@ -1,5 +1,7 @@
 # Live model integration findings
 
+The later [response-quality follow-up](response-quality-results.md) tests repairs for the prose failures below, evaluates retained natural conversation, and records the new storyteller comparison. The measurements on this page describe the earlier development pass.
+
 This development pass connected the trained evidence policy to the live application, compared the existing task and player adapters with the base model, and replayed authored speech through actual transcription and assistance. Model outputs were reviewed separately from mechanical checks. Reviews were performed by an assistant and were not calibrated against independent human labels.
 
 ## What the replay found

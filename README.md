@@ -63,3 +63,5 @@ The companion [Qwen adapter toolkit](https://github.com/russedavid/qwen-ttrpg) t
 An optional [agent-training environment](docs/agent-training.md) exercises the same evidence tools on authored tasks with verifiable structured outcomes. A trained policy can run as a [separate live evidence planner](docs/live-planner.md), with main-model fallback and verified arithmetic. Training and workflow evaluation remain separate measurements.
 
 [Live integration findings](docs/live-integration-results.md) describe the selected model roles, the failures found by audio replay, and the measured speech/planner coexistence check.
+
+[Response-quality follow-up](docs/response-quality-results.md) records the storyteller retraining decision, source-grounded repairs, and natural-conversation evaluation.

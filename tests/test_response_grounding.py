@@ -542,3 +542,38 @@ def test_atomic_uncertainty_does_not_whitelist_embedded_events_or_player_speech(
     ]:
         units = claim_units(body(), NarrationAnswer(narration=text))
         assert not literal_checks(units, [])
+
+
+def test_imperative_advice_cannot_claim_rule_authority_without_evidence():
+    from story_copilot.response_grounding import source_wording
+
+    context = {
+        "rules": [
+            {
+                "id": "cost",
+                "text": "The motor requires four cells.",
+                "visibility": "public",
+            }
+        ]
+    }
+    answer = NarrationAnswer(
+        narration="",
+        private_notes="If they lack the guide’s permission, deny activation per the rules.",
+    )
+    units = claim_units(context, answer)
+    assert "rule" in units[0]["kinds"] and not units[0]["can_be_nonassertion"]
+    assessment = ClaimCheck(
+        id=units[0]["id"], verdict="not_an_assertion", reason="Conditional advice."
+    )
+    with pytest.raises(ValueError, match="declarative claim"):
+        validate_checks(units, [assessment], sources(context))
+    assessment = ClaimCheck(
+        id=units[0]["id"],
+        verdict="supported",
+        support=[{"source_id": "cost", "quote": "The motor requires four cells."}],
+        reason="Faulty scope inference.",
+    )
+    validate_checks(units, [assessment], sources(context))
+    safe, edits = source_wording(answer, units, [assessment], sources(context))
+    assert "permission" not in safe.private_notes
+    assert "The motor requires four cells." in safe.private_notes

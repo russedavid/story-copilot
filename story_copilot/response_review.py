@@ -1,6 +1,8 @@
 """Bounded source-aware editing; model review is not an independent quality label."""
 
-from typing import Literal
+from typing import Annotated, Literal
+import os
+import re
 import time
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -44,6 +46,75 @@ class ResponseReview(BaseModel):
     revision: NarrationAnswer | None
     addresses_current_task: bool = True
     task_reason: str = Field(default="", max_length=240)
+
+
+class CompactClaim(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    claim: int = Field(ge=0, strict=True)
+    verdict: Literal[
+        "supported", "unsupported", "not_an_assertion", "creative_proposal"
+    ]
+    actor: str = Field(default="", max_length=160)
+    sources: list[Annotated[int, Field(strict=True, ge=0)]] = Field(
+        default_factory=list, max_length=6
+    )
+
+
+class CompactResponseReview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    claim_checks: list[CompactClaim] = Field(max_length=40)
+    issues: list[Issue] = Field(max_length=6)
+    revision: NarrationAnswer | None
+    addresses_current_task: bool = True
+    task_reason: str = Field(default="", max_length=240)
+
+
+def source_spans(evidence):
+    spans = []
+    for source in evidence:
+        for match in re.finditer(
+            r"""[^\n]+?(?:[.!?](?!\d)["'’”]*(?=\s|$)|$)""", source["text"], re.M
+        ):
+            quote = match[0].strip()
+            if quote:
+                spans.append(
+                    {
+                        "id": len(spans),
+                        "source_id": source["id"],
+                        "kind": source["kind"],
+                        "visibility": source["visibility"],
+                        "quote": source_quote(source["text"], quote),
+                    }
+                )
+    return spans
+
+
+def expand_review(result, units, spans):
+    checks = []
+    for check in result.claim_checks:
+        if check.claim >= len(units) or any(
+            type(index) is not int or not 0 <= index < len(spans)
+            for index in check.sources
+        ):
+            raise ValueError("Review referenced an unavailable claim or source span.")
+        checks.append(
+            ClaimCheck(
+                id=units[check.claim]["id"],
+                verdict=check.verdict,
+                actor=check.actor,
+                support=[
+                    {
+                        "source_id": spans[index]["source_id"],
+                        "quote": spans[index]["quote"],
+                    }
+                    for index in check.sources
+                ],
+                reason="Model assessment; source references resolved to exact original spans.",
+            )
+        )
+    return ResponseReview(
+        **{**result.model_dump(exclude={"claim_checks"}), "claim_checks": checks}
+    )
 
 
 SYSTEM = """Review a private facilitator-assistance draft against the supplied context.
@@ -122,12 +193,38 @@ or have the NPC explain what must be checked before making the stronger claim.
 
 
 def review_response(body, answer, model, options):
+    from .model import LocalModel
+
     counter = _Counter(options.get("tokenizer"), options.get("token_counter"))
     budget = (
         options.get("context_limit", 16384) - options.get("safety_margin", 512) - 2200
     )
-    trace = {"prompt_budget": budget, "original": answer.model_dump(), "attempts": []}
+    preferred_limit = options.get("context_limit", 16384)
+    hard_limit = int(os.environ.get("STORY_MAX_CONTEXT_TOKENS", preferred_limit))
+    if hard_limit < preferred_limit:
+        raise ValueError("Preferred context budget exceeds the serving window.")
+    hard_budget = hard_limit - options.get("safety_margin", 512) - 2200
+    trace = {
+        "prompt_budget": budget,
+        "deadline_seconds": 150,
+        "original": answer.model_dump(),
+        "attempts": [],
+    }
     evidence = sources(body)
+    compact = isinstance(model, LocalModel)
+    spans = source_spans(evidence) if compact else []
+    system = SYSTEM
+    if compact:
+        system += """\nCompact response contract: required_claims uses zero-based claim numbers.
+For each claim_checks entry, return claim (that number), verdict, actor and sources
+(zero-based IDs from source_spans). Do not copy quotations or write per-claim reasons.
+The application resolves each source ID to its exact quotation and original source.
+Choose complete supporting statements, with their qualifiers, not merely related words.
+Use an empty sources list for proposed fiction and nonassertions. Explain actual defects
+in issues. This compact contract replaces the earlier claim_checks serialization only;
+all source, uncertainty, agency and usefulness requirements still apply.
+"""
+        trace["source_spans"] = spans
     started = time.monotonic()
     feedback = None
     safe_answer = None
@@ -144,7 +241,22 @@ def review_response(body, answer, model, options):
         request = {
             "context": body,
             "draft": answer.model_dump(),
-            "required_claims": units,
+            # The full source and draft already contain dialogue context. Keep
+            # local validation metadata in the trace instead of duplicating
+            # preceding paragraphs and character lists for every sentence.
+            "required_claims": [
+                {
+                    key: unit[key]
+                    for key in (
+                        "id",
+                        "field",
+                        "text",
+                        "kinds",
+                        "literal_player_subject",
+                    )
+                }
+                for unit in units
+            ],
             "claim_sources": (
                 [
                     {
@@ -164,8 +276,19 @@ def review_response(body, answer, model, options):
         }
         if feedback:
             request["validation_feedback"] = feedback
+        if compact:
+            request["required_claims"] = [
+                {**claim, "id": index}
+                for index, claim in enumerate(request["required_claims"])
+            ]
+            request.pop("claim_sources")
+            request["source_spans"] = spans
+        request["task"] = {
+            "current_contribution": body.get("new_player_input", ""),
+            "focus": "Help answer this current contribution. A withdrawn topic is not a current request. Remove stale answers even if their facts remain true; retain compatible unanswered questions.",
+        }
         attempt = {
-            "prompt_tokens": counter.count(request, SYSTEM),
+            "prompt_tokens": counter.count(request, system),
             "draft": answer.model_dump(),
             "required_claims": units,
         }
@@ -173,22 +296,33 @@ def review_response(body, answer, model, options):
         trace["prompt_tokens"] = attempt["prompt_tokens"]
         try:
             if attempt["prompt_tokens"] > budget:
-                raise ValueError(
-                    "The complete source and draft exceed the review context budget."
+                if attempt["prompt_tokens"] > hard_budget:
+                    raise ValueError(
+                        "The complete source and draft exceed the review context budget."
+                    )
+                budget = min(hard_budget, attempt["prompt_tokens"] + 512)
+                trace.update(
+                    expanded_for_review=True,
+                    preferred_context_limit=preferred_limit,
+                    model_context_limit=hard_limit,
+                    prompt_budget=budget,
                 )
-            remaining = 90 - (time.monotonic() - started)
+            remaining = 150 - (time.monotonic() - started)
             if remaining <= 0:
                 raise ValueError("The bounded review deadline expired.")
             result, metrics = model.complete(
                 [
-                    {"role": "system", "content": SYSTEM},
+                    {"role": "system", "content": system},
                     {"role": "user", "content": packed(request)},
                 ],
-                ResponseReview,
+                CompactResponseReview if compact else ResponseReview,
                 max_tokens=2200,
                 temperature=0,
                 timeout=min(85, remaining),
             )
+            if compact:
+                attempt["compact_review"] = result.model_dump()
+                result = expand_review(result, units, spans)
             trace["model"] = metrics
             trace["review"] = result.model_dump()
             attempt.update(model=metrics, review=result.model_dump())
@@ -309,7 +443,7 @@ def review_response(body, answer, model, options):
             if (
                 attempt_number == 0
                 and attempt["prompt_tokens"] <= budget
-                and time.monotonic() - started < 85
+                and time.monotonic() - started < 145
             ):
                 feedback = (
                     str(exc)

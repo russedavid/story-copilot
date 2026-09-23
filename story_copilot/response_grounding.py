@@ -51,6 +51,10 @@ UNCERTAINTY = re.compile(
     re.I,
 )
 CONDITIONAL = re.compile(r"\b(?:if|could|may|might|perhaps|maybe|whether)\b", re.I)
+RULE_AUTHORITY = re.compile(
+    r"\b(?:per (?:the )?rules?|according to (?:the )?rules?|(?:the |supplied )rules? (?:require|allow|forbid|state))\b",
+    re.I,
+)
 UNCERTAINTY_ONLY = re.compile(
     r"""["“]?(?:I (?:do not|don't) know|I(?: am|'m) not sure|(?:That|It) (?:is|remains) (?:unknown|uncertain|unconfirmed|unverified|not known|not established)|Unknown)[.!]?["”]?""",
     re.I,
@@ -151,6 +155,8 @@ def claim_units(body, answer):
                 kinds.append("rule")
             if field == "private_notes":
                 kinds.append("private_context")
+                if RULE_AUTHORITY.search(value) and "rule" not in kinds:
+                    kinds.append("rule")
             if not kinds and field in {"narration", "direct_answer"}:
                 kinds.append("world_context")
             if kinds and not value.rstrip("\"'’”").endswith("?"):
@@ -183,7 +189,10 @@ def claim_units(body, answer):
                                 )
                             )
                         )
-                        and not bool(ZERO_RULE.search(value)),
+                        and not bool(ZERO_RULE.search(value))
+                        and not (
+                            field == "private_notes" and RULE_AUTHORITY.search(value)
+                        ),
                         "explicit_zero_rule": bool(ZERO_RULE.search(value)),
                         "literal_player_subject": subject,
                         "quoted_dialogue": quoted,

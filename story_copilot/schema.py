@@ -104,6 +104,12 @@ class DirectAnswer(NarrationAnswer):
     narration: Literal[""] = ""
 
 
+class SceneAnswer(NarrationAnswer):
+    """An in-fiction response should not add an unrelated bookkeeping answer."""
+
+    direct_answer: Literal[""] = ""
+
+
 class ResourceTotalCandidate(EventCandidate):
     model_config = ConfigDict(extra="forbid", strict=True)
     kind: Literal["resource"]

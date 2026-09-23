@@ -118,7 +118,12 @@ def run(path):
         )
     directory = root / (time.strftime("%Y%m%d-%H%M%S") + "-" + uuid4().hex[:8])
     directory.mkdir(mode=0o700)
-    state = {"status": "starting", "run": str(directory), "services": {}}
+    state = {
+        "status": "starting",
+        "run": str(directory),
+        "supervisor_pid": os.getpid(),
+        "services": {},
+    }
     children = []
     stop = False
 

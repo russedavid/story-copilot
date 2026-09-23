@@ -94,6 +94,7 @@ def test_owned_stack_readiness_shutdown_and_failure_cleanup(tmp_path, fail):
     )
     try:
         ready = status(config["run_root"], child)
+        assert ready["supervisor_pid"] == child.pid
         if fail:
             (tmp_path / "fail").touch()
         else:

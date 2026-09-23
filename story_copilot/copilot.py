@@ -26,7 +26,7 @@ from .rule_advice import (
     checked_advice,
 )
 from .rules import search_rules, active_documents
-from .schema import DirectAnswer, Event, Extraction, NarrationAnswer
+from .schema import DirectAnswer, Event, Extraction, NarrationAnswer, SceneAnswer
 from .store import digest, packed, source_quote
 from .training import STORY_SYSTEM
 from .writing import FACILITATOR_WRITING
@@ -1347,11 +1347,15 @@ def make_copilot(
                 trace["writer_route"] = "configured_narration"
             output, metrics = writer.complete(
                 messages,
-                DirectAnswer if factual else NarrationAnswer,
+                DirectAnswer if factual else SceneAnswer,
                 max_tokens=min(1400, context["output_reserve"]),
                 temperature=0 if factual else 0.7,
                 **writer_options,
             )
+            if not factual:
+                # Review can still provide verified factual guidance as a
+                # fallback, even though the scene writer cannot fill that slot.
+                output = NarrationAnswer.model_validate(output.model_dump())
             if quality_review:
                 from .response_review import review_response
 

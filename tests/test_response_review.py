@@ -109,6 +109,43 @@ def test_context_limit_does_not_drop_sources_to_force_a_review():
     assert "model" not in trace
 
 
+def test_review_can_use_explicit_serving_headroom_without_dropping_sources(monkeypatch):
+    monkeypatch.setenv("STORY_MAX_CONTEXT_TOKENS", "16384")
+    source = {"source": "x" * 18000}
+    draft = NarrationAnswer(narration="The caretaker waits.")
+
+    class Check:
+        def complete(self, messages, *args, **kwargs):
+            request = json.loads(messages[-1]["content"])
+            assert request["context"] == source
+            assert all(
+                "preceding_text" not in unit for unit in request["required_claims"]
+            )
+            return (
+                ResponseReview(
+                    issues=[],
+                    revision=None,
+                    claim_checks=[
+                        ClaimCheck(
+                            id=u["id"],
+                            verdict="creative_proposal",
+                            actor="caretaker",
+                            reason="NPC proposal.",
+                        )
+                        for u in request["required_claims"]
+                    ],
+                ),
+                {},
+            )
+
+    answer, trace = review_response(
+        source, draft, Check(), {**OPTIONS, "context_limit": 4096}
+    )
+    assert answer == draft and trace["expanded_for_review"]
+    assert trace["preferred_context_limit"] == 4096
+    assert trace["prompt_tokens"] <= trace["prompt_budget"] < 16384
+
+
 def test_generation_schema_forces_valid_event_shapes_without_losing_fragments():
     validator = Draft202012Validator(wire_schema(GenerationExtraction))
     base = {
@@ -174,3 +211,100 @@ def test_rule_display_does_not_repeat_confident_prose_when_a_rule_is_missing():
         },
     )
     assert display == "Can afford: yes.\nCalculation: 2 ≥ 1"
+
+
+def test_compact_review_resolves_source_spans_before_existing_claim_guards():
+    from story_copilot.model import LocalModel
+    from story_copilot.response_review import CompactResponseReview, CompactClaim
+
+    context = {
+        "state": {"entities": {"Ivo": {"sheet": {}}}},
+        "dialogue": [
+            {
+                "id": "seen",
+                "text": "Ivo has not seen the thread.",
+                "visibility": "public",
+            }
+        ],
+    }
+
+    class CompactModel(LocalModel):
+        def __init__(self):
+            pass
+
+        def complete(self, messages, schema, **kwargs):
+            request = json.loads(messages[-1]["content"])
+            assert schema is CompactResponseReview
+            assert request["required_claims"][0]["id"] == 0
+            assert request["source_spans"][0]["quote"] == "Ivo has not seen the thread."
+            return CompactResponseReview(
+                claim_checks=[CompactClaim(claim=0, verdict="supported", sources=[0])],
+                issues=[],
+                revision=None,
+            ), {"model": "scripted compact review"}
+
+    answer, trace = review_response(
+        context,
+        NarrationAnswer(narration="", direct_answer="Ivo looks uneasy."),
+        CompactModel(),
+        OPTIONS,
+    )
+    assert answer.direct_answer == "Ivo has not seen the thread."
+    assert trace["attempts"][0]["compact_review"]["claim_checks"][0]["sources"] == [0]
+    assert trace["review"]["claim_checks"][0]["support"] == [
+        {"source_id": "seen", "quote": "Ivo has not seen the thread."}
+    ]
+
+
+def test_compact_indices_cannot_invent_a_source_or_coerce_a_boolean_reference():
+    from story_copilot.response_review import (
+        CompactResponseReview,
+        CompactClaim,
+        expand_review,
+    )
+    from pydantic import ValidationError
+
+    units = claim_units({}, NarrationAnswer(narration="The bell rings."))
+    result = CompactResponseReview(
+        claim_checks=[CompactClaim(claim=0, verdict="supported", sources=[9])],
+        issues=[],
+        revision=None,
+    )
+    with pytest.raises(ValueError, match="unavailable"):
+        expand_review(result, units, [])
+    with pytest.raises(ValidationError):
+        CompactClaim(claim=0, verdict="supported", sources=[True])
+
+
+def test_source_catalog_keeps_complete_qualifiers_decimals_and_visibility():
+    from story_copilot.response_review import source_spans
+
+    spans = source_spans(
+        [
+            {
+                "id": "rule",
+                "kind": "rule",
+                "visibility": "private",
+                "text": "The cost is 1.5 cells. A teamwork modifier is unknown.",
+            }
+        ]
+    )
+    assert [s["quote"] for s in spans] == [
+        "The cost is 1.5 cells.",
+        "A teamwork modifier is unknown.",
+    ]
+    assert all(s["source_id"] == "rule" and s["visibility"] == "private" for s in spans)
+
+
+def test_scene_contract_does_not_generate_an_unrelated_bookkeeping_slot():
+    from story_copilot.schema import SceneAnswer, DirectAnswer
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        SceneAnswer(
+            narration="The caretaker replies.",
+            direct_answer="An unrelated old balance.",
+        )
+    assert SceneAnswer(narration="The caretaker replies.").direct_answer == ""
+    assert DirectAnswer(direct_answer="Three charges remain.").narration == ""
+    assert wire_schema(SceneAnswer)["properties"]["direct_answer"]["const"] == ""
