@@ -569,3 +569,32 @@ def test_interrupted_run_recovery_keeps_trace_and_allows_fresh_request(table):
     assert c.start_run(sid) is not None
     with pytest.raises(ValueError, match="running"):
         c.recover_run(sid, run)
+
+
+def test_recovery_form_unblocks_interrupted_runs_but_refuses_an_active_worker(table):
+    from story_copilot.web import create_app
+
+    c, _, sid = table
+    c.set_proactive(sid, False)
+    run, snapshot = c.start_run(sid)
+    app = create_app(c.store)
+    with TestClient(app) as client:
+        page = client.get(f"/play/{sid}").text
+        token = re.search(r'value="([^"]+)" name="csrf_token"', page)[1]
+        headers = {"origin": "null", "sec-fetch-site": "same-origin"}
+        app.state.campaign_scheduler.is_pending = lambda session_id: True
+        client.post(
+            f"/play/{sid}/trace/{run}/recover",
+            data={"csrf_token": token},
+            headers=headers,
+        )
+        assert c.runs(sid)[0]["status"] == "running"
+        app.state.campaign_scheduler.is_pending = lambda session_id: False
+        client.post(
+            f"/play/{sid}/trace/{run}/recover",
+            data={"csrf_token": token},
+            headers=headers,
+        )
+        recovered = next(row for row in c.runs(sid) if row["id"] == run)
+        assert recovered["status"] == "failed" and recovered["request"] == snapshot
+        assert c.start_run(sid) is not None

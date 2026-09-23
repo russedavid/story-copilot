@@ -45,3 +45,13 @@ Four overlapping chunks cover 95 unique seconds of retained natural conversation
 The assistance replay imports the freshly recognized words and leaves unmapped speaker identities unknown. It checks incomplete speech, banter, proposed versus completed actions, and whether suggestions remain outside observed dialogue. A prior model transcript is retained only for comparison. Without independently corrected words and speaker boundaries, there is no WER, DER or verified identity score. No recording or playback was initiated for this evaluation.
 
 Source recordings, transcripts, private responses, weights and identifying metadata are not included in the repository. The [evaluation commands](evaluation.md) and [review contract](response-grounding.md) are available for running the procedure with your own material.
+
+## Public-release deployment verification
+
+The pinned public release was started, stopped cleanly, and restarted from the same private stack configuration. The application, speech worker, larger model server and learned-policy server all used public entry points. The inference runtime's 3,603 source files matched its pinned upstream revision. Existing private source material was copied into a separate workspace with matching text fingerprints, row counts, database integrity and foreign keys; the originals remain intact.
+
+A fresh eight-step replay on that deployed release passed all 58 mechanical assertions and the additional real-generation stale-source check. Assistance took 40.2–97.6 seconds, with a 52.0-second median. Source/task/agency review found the intended behavior across these cases, while the last scene still needed quotation cleanup and some private notes remained repetitive. These are development observations, not a population accuracy rate or a controlled speed comparison with earlier runs.
+
+The two player adapters passed all 34 access, routing, duplicate, state-integrity and stale-write checks across six live cases. The public speech worker processed an existing authored clip while the trained policy returned the correct current value with its source citation. Eight application/library/review pages loaded, and the Firefox-style same-origin settings form saved without changing the configuration. No microphone capture or playback was started.
+
+Deployment review also caught a recovery form that did not invoke its backend action. The route now clears an interrupted request while preserving its trace, and its regression verifies that an actually running worker cannot be cleared through that form.

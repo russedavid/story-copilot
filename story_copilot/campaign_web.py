@@ -1931,7 +1931,7 @@ def register_campaign_routes(
                 raise ValueError(
                     "This app is still processing the request. Wait for it to finish."
                 )
-                campaigns.recover_run(session_id, run_id)
+            campaigns.recover_run(session_id, run_id)
             return redirect(f"/play/{session_id}")
         except ValueError as exc:
             return error(exc, f"/play/{session_id}")
