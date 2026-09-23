@@ -23,6 +23,8 @@ If your server requires authentication, set a key in the app's launch environmen
 
 For a local llama.cpp server, use an alias matching the model identifier in settings. Configure the app's context limit to fit the server's per-request window. Optional LoRAs are selected per request, sharing a single base model. List every loaded adapter in the routing inventory; all unselected adapters receive an explicit zero scale.
 
+For the full GPU-host environment, [run the supervised local stack](docs/local-stack.md) from pinned public releases with a private configuration and your own model files.
+
 ## Try a conversation
 
 1. Choose **Try an example** to open *The Unsent Signal*, an original fictional scenario with two characters. This is authored sample content, not a transcript or a benchmark answer.

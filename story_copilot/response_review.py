@@ -43,7 +43,7 @@ class ResponseReview(BaseModel):
     issues: list[Issue] = Field(max_length=6)
     revision: NarrationAnswer | None
     addresses_current_task: bool = True
-    task_reason: str = Field(default="", max_length=600)
+    task_reason: str = Field(default="", max_length=240)
 
 
 SYSTEM = """Review a private facilitator-assistance draft against the supplied context.
@@ -80,6 +80,8 @@ Do not rewrite merely to impose your preferred style or remove harmless fictiona
 
 SYSTEM += """
 required_claims lists consequential sentences across ALL fields, including private_notes.
+Keep each claim reason to at most twelve words. For creative_proposal, leave support empty:
+it is proposed fiction, not a source citation. Avoid repeating the scene in the assessment.
 World-context statements also need assessment, including short replies inside NPC dialogue.
 New NPC voice can add consistent texture but cannot invent the answer to an unresolved fact.
 An explicit unknown is not evidence of absence. Do not cite a draft as its own source.
@@ -185,7 +187,7 @@ def review_response(body, answer, model, options):
                 ResponseReview,
                 max_tokens=2200,
                 temperature=0,
-                timeout=min(60, remaining),
+                timeout=min(85, remaining),
             )
             trace["model"] = metrics
             trace["review"] = result.model_dump()

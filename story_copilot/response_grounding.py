@@ -29,7 +29,7 @@ class ClaimCheck(BaseModel):
     ]
     actor: str = Field(default="", max_length=160)
     support: list[Support] = Field(default_factory=list, max_length=6)
-    reason: str = Field(min_length=1, max_length=500)
+    reason: str = Field(min_length=1, max_length=180)
 
 
 RULE_CLAIM = re.compile(

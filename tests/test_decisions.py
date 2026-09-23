@@ -208,8 +208,8 @@ def test_repeated_tool_calls_are_bounded_and_visible(table):
         next(body for task, body, _ in models.calls if task == "storyteller")
     )
     assert all(
-        0 < kwargs["timeout"] <= 75
-        for task, _, kwargs in models.calls
+        0 < kwargs["timeout"] <= (85 if "required_claims" in body else 75)
+        for task, body, kwargs in models.calls
         if task == "auditor"
     )
 
