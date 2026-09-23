@@ -100,17 +100,23 @@ def test_assistance_imports_fresh_words_and_keeps_unmapped_speakers_unknown(
     home.mkdir()
     save(home, {})
     seen = []
+    manual = []
 
     def build(snapshot):
         seen.extend(snapshot["messages"])
-        return snapshot
+        return {**snapshot, "work_protocol": "facilitator-copilot-v2"}
+
+    def generate(context):
+        manual.append(context.get("manual_request"))
+        return {"suggestions": []}
 
     monkeypatch.setattr(
         "story_copilot.copilot.make_copilot",
-        lambda store: (build, lambda context: {"suggestions": []}),
+        lambda store: (build, generate),
     )
     result = assist(fixtures, path, home, context, tmp_path / "results")
     assert result["status"] == "complete" and result["acoustic_gold"] is False
     assert result["cases"][0]["recognized"] == "Fresh words."
     assert seen and all(m["role"] == "unknown" for m in seen)
+    assert manual == [True]
     assert all(result["cases"][0]["checks"].values())

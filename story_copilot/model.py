@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from copy import copy, deepcopy
 
 import httpx
 
@@ -60,9 +61,22 @@ class LocalModel:
         self.name = model or self.configuration["model"]
         self.task = task
 
+    def without_task_adapter(self):
+        configuration = deepcopy(self.configuration)
+        configuration["routing"]["tasks"].pop(self.task, None)
+        result = copy(self)
+        result.configuration = configuration
+        return result
+
     def complete(
-        self, messages, schema, max_tokens=2500, temperature=None, timeout=300,
+        self,
+        messages,
+        schema,
+        max_tokens=2500,
+        temperature=None,
+        timeout=300,
         constrain=True,
+        sampling_profile="production",
     ):
         from .routing import selection
         from .wire_schema import wire_schema, WIRE_SCHEMA_VERSION
@@ -75,7 +89,7 @@ class LocalModel:
         payload = {
             "model": self.name,
             "messages": messages,
-            **sampling(self.task, temperature),
+            **sampling(self.task, temperature, profile=sampling_profile),
             "max_tokens": max_tokens,
             "chat_template_kwargs": {"enable_thinking": False},
             "lora": lora,
@@ -156,7 +170,8 @@ class LocalModel:
             "response": content,
             "finish_reason": choice.get("finish_reason"),
             "sampling": {
-                **sampling(self.task, temperature),
+                **sampling(self.task, temperature, profile=sampling_profile),
+                "profile": sampling_profile,
                 "max_tokens": max_tokens,
                 "thinking": False,
             },

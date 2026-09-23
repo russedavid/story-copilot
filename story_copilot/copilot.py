@@ -1336,11 +1336,21 @@ def make_copilot(
             {"role": "user", "content": packed(narrator_body)},
         ]
         try:
-            output, metrics = model_factory("storyteller").complete(
+            factual = intent in {"rules", "state"} or bool(context.get("private_reply_to"))
+            writer = model_factory("storyteller")
+            writer_options = {}
+            if factual and isinstance(writer, LocalModel):
+                writer = writer.without_task_adapter()
+                writer_options["sampling_profile"] = "greedy"
+                trace["writer_route"] = "base_factual"
+            else:
+                trace["writer_route"] = "configured_narration"
+            output, metrics = writer.complete(
                 messages,
-                DirectAnswer if intent in {"rules", "state"} or context.get("private_reply_to") else NarrationAnswer,
+                DirectAnswer if factual else NarrationAnswer,
                 max_tokens=min(1400, context["output_reserve"]),
-                temperature=0.7,
+                temperature=0 if factual else 0.7,
+                **writer_options,
             )
             if quality_review:
                 from .response_review import review_response

@@ -215,6 +215,12 @@ def assist(fixtures, transcribed, home, context, output):
         "campaign_id": cid,
         "acoustic_gold": False,
         "context_and_mapping_provenance": setup.get("provenance", "unreviewed"),
+        "model_settings": load(home),
+        "transcription_sha256": sha256(transcription_bytes).hexdigest(),
+        "application_sources": {
+            p.name: sha256(p.read_bytes()).hexdigest()
+            for p in Path(__file__).parent.glob("*.py")
+        },
         "cases": [],
     }
     for item in acoustic["chunks"]:
@@ -252,7 +258,7 @@ def assist(fixtures, transcribed, home, context, output):
         deliver_to_campaign(queue, campaigns, source["session"], sid)
         count = len(campaigns.messages(sid))
         started = time.monotonic()
-        rid = campaigns.generate(sid, generate, build_context=build)
+        rid = campaigns.generate(sid, generate, build_context=build, force=True)
         run = next(r for r in campaigns.runs(sid) if r["id"] == rid)
         row = {
             "id": str(source["sequence"]),

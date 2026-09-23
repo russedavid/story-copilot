@@ -58,7 +58,19 @@ class Models:
                         owner.on_decision()
                     answer = next(owner.decisions)
                 elif schema is ResponseReview:
-                    answer = ResponseReview(issues=[], revision=None)
+                    answer = ResponseReview(
+                        issues=[],
+                        revision=None,
+                        claim_checks=[
+                            {
+                                "id": unit["id"],
+                                "verdict": "not_an_assertion",
+                                "support": [],
+                                "reason": "The fixture explicitly describes a possibility, not a factual event.",
+                            }
+                            for unit in body.get("required_claims", [])
+                        ],
+                    )
                 elif schema is Extraction:
                     answer = Extraction()
                 elif schema is RulesAnswer:

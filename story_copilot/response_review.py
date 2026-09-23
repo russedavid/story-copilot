@@ -1,4 +1,4 @@
-"""One bounded editing pass; model review is not an independent quality label."""
+"""Bounded source-aware editing; model review is not an independent quality label."""
 
 from typing import Literal
 import time
@@ -13,6 +13,11 @@ from .response_grounding import (
     sources,
     validate_checks,
     guarded_answer,
+    source_wording,
+    literal_checks,
+    assess_claims,
+    remove_claims,
+    issue_units,
 )
 
 
@@ -32,9 +37,11 @@ class Issue(BaseModel):
 
 class ResponseReview(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    claim_checks: list[ClaimCheck] = Field(default_factory=list, max_length=40)
     issues: list[Issue] = Field(max_length=6)
     revision: NarrationAnswer | None
-    claim_checks: list[ClaimCheck] = Field(default_factory=list, max_length=40)
+    addresses_current_task: bool = True
+    task_reason: str = Field(default="", max_length=600)
 
 
 SYSTEM = """Review a private facilitator-assistance draft against the supplied context.
@@ -78,13 +85,32 @@ Unknown, missing and zero are different. An unanswered rules question cannot sup
 Use not_an_assertion only for a question, conditional possibility, uncertainty or offered choice,
 never to excuse an unsupported declarative sentence. Otherwise use unsupported and identify the defect
 in issues. Remove it in the revision or ask its owner. Keep NPC speech and consistent world invention.
+Use creative_proposal with actor set to the NPC or environmental subject for consistent new narration.
+Addressing a player in NPC speech or acting toward one is not taking the player's turn. A proposed NPC
+reply need not already occur in a transcript. Do not use this label for a player's reaction, for private
+notes asserting past events, or to contradict a known fact or explicit uncertainty. Leave actor empty
+for other verdicts. A quoted NPC reply may name its speaker here even when the name is not in the quote.
 Do not add a fresh player reaction while fixing another. The revised response will be checked again.
 claim_sources is an index into context: conversation and rule IDs appear there; state IDs identify
 the corresponding category/key in context.state. Quote the actual source text, not the index metadata.
-For literal_player_subject claims, retain one source's wording when restating the player's state or action.
-Do not add a gesture or feeling through paraphrase. You may omit an unnecessary player description;
-NPC dialogue and world reactions can still use original prose. Rendered resource statements are supplied
+For literal_player_subject claims, supply one complete source assertion for the player's state or action.
+The application may render that source wording to prevent a paraphrase adding gestures or feelings.
+NPC dialogue and world reactions can still use original prose. Rendered state statements are supplied
 from the current ledger. If you cannot support a player clause, remove it or ask that player to respond.
+Private notes need the same discipline. Do not invent a retrospective explanation, escalation or completed
+event there. A joke is not violence; drawing a weapon is not firing it. Factual private commentary needs
+source support. Imperative advice and clearly labelled possibilities may be not_an_assertion, but a draft's
+new fiction is not something that already happened. Omit redundant notes instead of manufacturing them.
+Set addresses_current_task and briefly explain task_reason. A description of what the facilitator should
+write, a repetition of the request, or an offer to answer later is not the requested response. When the
+current need is an NPC reply, provide that reply rather than asking the player to write it. When the
+source really lacks an essential fact, one useful clarification can satisfy the task. Otherwise, if
+addresses_current_task is false, identify an anchored usability issue and supply a complete useful revision.
+For a request for a first step or an alternative, name a concrete operation and its object. Restating
+the desired outcome is not enough: 'make it work' is a goal; 'reconnect the loose cable' is an operation.
+Leave the choice of which player acts open. Do not certify a stronger capability from a weaker observation:
+a lamp lighting up does not establish that its battery will last all night. Preserve that uncertainty
+or have the NPC explain what must be checked before making the stronger claim.
 """
 
 
@@ -97,6 +123,7 @@ def review_response(body, answer, model, options):
     evidence = sources(body)
     started = time.monotonic()
     feedback = None
+    safe_answer = None
     for attempt_number in range(2):
         units = claim_units(body, answer)
         request = {
@@ -110,7 +137,7 @@ def review_response(body, answer, model, options):
                         "id",
                         "kind",
                         "visibility",
-                        *(("text",) if s["id"].startswith("state:resources:") else ()),
+                        *(("text",) if s["id"].startswith("state:") else ()),
                     )
                 }
                 for s in evidence
@@ -148,10 +175,28 @@ def review_response(body, answer, model, options):
             trace["model"] = metrics
             trace["review"] = result.model_dump()
             attempt.update(model=metrics, review=result.model_dump())
-            unsupported = validate_checks(units, result.claim_checks, evidence)
-            if unsupported and not result.issues:
+            attempt["addresses_current_task"] = result.addresses_current_task
+            if not result.addresses_current_task and not result.issues:
                 raise ValueError(
-                    "Unsupported claims require an explicit issue and repair."
+                    "A nonresponsive draft needs an explicit usability issue and a useful revision."
+                )
+            approved, unsupported, failures = assess_claims(
+                units, result.claim_checks, evidence
+            )
+            attempt["claim_validation_failures"] = failures
+            accepted_units = [u for u in units if u not in unsupported]
+            safe_answer, safe_edits = source_wording(
+                answer, accepted_units, approved, evidence
+            )
+            safe_answer = remove_claims(
+                safe_answer, unsupported + issue_units(answer, result.issues)
+            )
+            if failures:
+                feedback = packed(
+                    {
+                        "claim_validation_failures": failures,
+                        "instruction": "Remove unsupported claims or render exact supported facts. Preserve independently supported answers.",
+                    }
                 )
             if bool(result.issues) != (result.revision is not None):
                 raise ValueError(
@@ -172,12 +217,57 @@ def review_response(body, answer, model, options):
             if revision is not None and isinstance(answer, DirectAnswer):
                 revision = DirectAnswer.model_validate(revision.model_dump())
             if revision is None:
+                if unsupported:
+                    if attempt_number == 0:
+                        feedback = (
+                            feedback
+                            or "The claim checks identify unsupported statements. Remove those statements while retaining supported facts."
+                        )
+                        continue
+                    trace.update(
+                        status="guarded",
+                        reason="Unverified claims were removed; independently supported content was retained.",
+                    )
+                    trace.setdefault("source_wording", []).extend(safe_edits)
+                    return safe_answer, trace
+                answer, edits = source_wording(
+                    answer, units, result.claim_checks, evidence
+                )
+                trace.setdefault("source_wording", []).extend(edits)
                 trace["status"] = "revised" if attempt_number else "no_issue_found"
                 return answer, trace
-            trusted = {(u["field"], u["text"]) for u in units if u not in unsupported}
+            trusted = {(u["field"], u["text"]) for u in accepted_units}
             revised_units = claim_units(body, revision)
+            retained = [
+                u
+                for u in units
+                if (u["field"], u["text"])
+                in {(x["field"], x["text"]) for x in revised_units}
+            ]
+            revision, edits = source_wording(
+                revision,
+                [u for u in retained if u in accepted_units],
+                approved,
+                evidence,
+            )
+            trace.setdefault("source_wording", []).extend(edits)
+            revised_units = claim_units(body, revision)
+            exact = literal_checks(revised_units, evidence)
+            verified_ids = {check.id for check in exact}
+            source_rendered = {
+                u["id"]
+                for u in revised_units
+                if any(
+                    u["field"] == e["field"] and u["text"] in e["rendered"]
+                    for e in edits
+                )
+            }
             unverified = [
-                u for u in revised_units if (u["field"], u["text"]) not in trusted
+                u
+                for u in revised_units
+                if (u["field"], u["text"]) not in trusted
+                and u["id"] not in verified_ids
+                and u["id"] not in source_rendered
             ]
             if not unverified:
                 trace["status"] = "revised"
@@ -188,7 +278,7 @@ def review_response(body, answer, model, options):
                     status="guarded",
                     reason="The revision introduced additional unverified claims.",
                 )
-                return guarded_answer(answer, unverified), trace
+                return safe_answer, trace
         except Exception as exc:
             attempt["error"] = str(exc)
             if getattr(exc, "trace", None):
@@ -209,4 +299,6 @@ def review_response(body, answer, model, options):
             )
             if getattr(exc, "trace", None):
                 trace["model"] = exc.trace
-            return guarded_answer(answer, units) if units else answer, trace
+            return safe_answer if safe_answer is not None else guarded_answer(
+                answer, units
+            ) if units else answer, trace
