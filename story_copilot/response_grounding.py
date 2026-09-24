@@ -45,9 +45,11 @@ ZERO_RULE = re.compile(
     r"\b(?:no|zero|0)\s+(?:\w+\s+){0,2}(?:bonus|modifier|penalty|advantage|cost|damage)\b|\b(?:bonus|modifier|penalty|advantage|cost|damage)\b\s+(?:is|of|equals|=)\s*(?:zero|0|none)\b",
     re.I,
 )
+# Recognize typographic contractions without normalizing the underlying text;
+# claim offsets and source quotations must still refer to the original wording.
 UNCERTAINTY = re.compile(
     r"\b(?:unknown|unspecified|uncertain|unconfirmed|unverified|not (?:known|established|confirmed)|"
-    r"(?:no one|nobody) knows|(?:don't|doesn't|do not|does not) know)\b",
+    r"(?:no one|nobody) knows|(?:don['’]t|doesn['’]t|do not|does not) know)\b",
     re.I,
 )
 CONDITIONAL = re.compile(r"\b(?:if|could|may|might|perhaps|maybe|whether)\b", re.I)
@@ -56,7 +58,7 @@ RULE_AUTHORITY = re.compile(
     re.I,
 )
 UNCERTAINTY_ONLY = re.compile(
-    r"""["“]?(?:I (?:do not|don't) know|I(?: am|'m) not sure|(?:That|It) (?:is|remains) (?:unknown|uncertain|unconfirmed|unverified|not known|not established)|Unknown)[.!]?["”]?""",
+    r"""["“]?(?:I (?:do not|don['’]t) know|I(?: am|['’]m) not sure|(?:That|It) (?:is|remains) (?:unknown|uncertain|unconfirmed|unverified|not known|not established)|Unknown)[.!]?["”]?""",
     re.I,
 )
 

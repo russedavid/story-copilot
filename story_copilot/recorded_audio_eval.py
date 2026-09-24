@@ -285,7 +285,7 @@ def assist(fixtures, transcribed, home, context, output):
         (output / "review.html").write_text(
             '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width">'
             "<style>body{font:16px/1.5 system-ui;max-width:1100px;margin:auto;padding:24px;background:#f4eee3;color:#352a20}section{border-top:1px solid #bca68e}pre{white-space:pre-wrap;overflow-wrap:anywhere}details pre{max-height:34rem;overflow:auto}</style>"
-            "<h1>Recorded conversation → assistance</h1><p>Actual retained audio and fresh transcription. Prior ASR is not acoustic gold; speaker identities require explicit review. Model proposals remain private and are not reference answers.</p>"
+            "<h1>Recorded conversation → assistance</h1><p>Actual retained audio and supplied transcription. This assistance replay does not rerun recognition. ASR is not acoustic gold; speaker identities require explicit review. Model proposals remain private and are not reference answers.</p>"
             + "".join(
                 f"<section><h2>Chunk {escape(x['id'])}</h2><h3>Recognized speech</h3><pre>{escape(x['recognized'])}</pre>"
                 + "".join(

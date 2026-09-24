@@ -544,6 +544,58 @@ def test_atomic_uncertainty_does_not_whitelist_embedded_events_or_player_speech(
         assert not literal_checks(units, [])
 
 
+@pytest.mark.parametrize("apostrophe", ["'", "’"])
+@pytest.mark.parametrize("source_apostrophe", ["'", "’"])
+def test_uncertainty_contractions_preserve_source_and_claim_text(
+    apostrophe, source_apostrophe
+):
+    source = f"The caretaker doesn{source_apostrophe}t know who followed."
+    context = {"documents": [{"id": "scene", "text": source, "visibility": "public"}]}
+    text = f"“I don{apostrophe}t know who followed.”"
+    units = claim_units(context, NarrationAnswer(narration=text))
+    check = ClaimCheck(
+        id=units[0]["id"],
+        verdict="supported",
+        support=[{"source_id": "scene", "quote": source}],
+        reason="Preserves the same unknown; punctuation must not change meaning.",
+    )
+    assert units[0]["text"] == text
+    assert not validate_checks(units, [check], sources(context))
+    assert check.support[0].quote == source
+
+    definite = claim_units(context, NarrationAnswer(narration="Nobody followed."))
+    check.id = definite[0]["id"]
+    with pytest.raises(ValueError, match="unknown source"):
+        validate_checks(definite, [check], sources(context))
+
+
+@pytest.mark.parametrize(
+    "text", ['“I don’t know.”', '“I’m not sure.”', '“I don\'t know.”', '“I\'m not sure.”']
+)
+def test_atomic_uncertainty_accepts_typographic_contractions(text):
+    from story_copilot.response_grounding import literal_checks
+
+    units = claim_units(body(), NarrationAnswer(narration=text))
+    assert units[0]["can_be_nonassertion"]
+    checks = literal_checks(units, [])
+    assert len(checks) == 1 and checks[0].verdict == "not_an_assertion"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '“I don’t know why the stranger left.”',
+        'Ivo says, “I don’t know.”',
+        'Ivo says, “I’m not sure.”',
+    ],
+)
+def test_curly_contractions_do_not_exempt_embedded_events_or_player_speech(text):
+    from story_copilot.response_grounding import literal_checks
+
+    units = claim_units(body(), NarrationAnswer(narration=text))
+    assert not literal_checks(units, [])
+
+
 def test_imperative_advice_cannot_claim_rule_authority_without_evidence():
     from story_copilot.response_grounding import source_wording
 
